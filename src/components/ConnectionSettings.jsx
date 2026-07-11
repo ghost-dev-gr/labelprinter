@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { saveConnection } from '../utils/settingsApi';
-import { disconnect, listPrinters } from '../utils/qzPrint';
+import { saveSettings, fetchPrinters } from '../utils/settingsApi';
 
 export default function ConnectionSettings({ settings, setSettings }) {
   const [printers, setPrinters] = useState([]);
@@ -15,10 +14,10 @@ export default function ConnectionSettings({ settings, setSettings }) {
     setTesting(true);
     setStatus('');
     try {
-      if (window.qz?.websocket?.isActive()) {
-        await disconnect();
-      }
-      const found = await listPrinters(settings);
+      // Save first so the server (which does the actual connecting) uses the
+      // values currently in the form, not whatever was saved before.
+      await saveSettings(settings);
+      const found = await fetchPrinters();
       setPrinters(found);
       setStatus(`Connected - found ${found.length} printer(s)`);
     } catch (err) {
@@ -28,43 +27,25 @@ export default function ConnectionSettings({ settings, setSettings }) {
   }
 
   async function handleSave() {
-    await saveConnection(settings);
+    await saveSettings(settings);
     setStatus('Settings saved.');
   }
 
   return (
     <div style={{ padding: 16, fontFamily: 'sans-serif', maxWidth: 480 }}>
-      <h2 style={{ fontSize: 16 }}>QZ Tray Connection</h2>
+      <h2 style={{ fontSize: 16 }}>Printer &amp; Tunnel Connection</h2>
 
       <label style={{ display: 'block', marginBottom: 8 }}>
-        Host / IP:{' '}
-        <input type="text" value={settings.host} onChange={(e) => update({ host: e.target.value })} />
+        Tunnel host (e.g. your-tunnel.trycloudflare.com):{' '}
+        <input type="text" value={settings.tunnelHost} onChange={(e) => update({ tunnelHost: e.target.value })} />
       </label>
 
       <label style={{ display: 'block', marginBottom: 8 }}>
-        <input
-          type="checkbox"
-          checked={settings.usingSecure}
-          onChange={(e) => update({ usingSecure: e.target.checked })}
-        />{' '}
-        Use secure websocket (wss)
-      </label>
-
-      <label style={{ display: 'block', marginBottom: 8 }}>
-        Secure port:{' '}
+        Tunnel port:{' '}
         <input
           type="number"
-          value={settings.securePort}
-          onChange={(e) => update({ securePort: Number(e.target.value) })}
-        />
-      </label>
-
-      <label style={{ display: 'block', marginBottom: 8 }}>
-        Insecure port:{' '}
-        <input
-          type="number"
-          value={settings.insecurePort}
-          onChange={(e) => update({ insecurePort: Number(e.target.value) })}
+          value={settings.tunnelPort}
+          onChange={(e) => update({ tunnelPort: Number(e.target.value) })}
         />
       </label>
 
@@ -88,7 +69,7 @@ export default function ConnectionSettings({ settings, setSettings }) {
       {printers.length > 0 && (
         <label style={{ display: 'block', marginBottom: 8 }}>
           Printer:{' '}
-          <select value={settings.printerOverride} onChange={(e) => update({ printerOverride: e.target.value })}>
+          <select value={settings.printerName} onChange={(e) => update({ printerName: e.target.value })}>
             <option value="">(select a printer)</option>
             {printers.map((p) => (
               <option key={p} value={p}>{p}</option>
@@ -97,7 +78,29 @@ export default function ConnectionSettings({ settings, setSettings }) {
         </label>
       )}
 
-      <div style={{ fontSize: 13, color: '#555' }}>{status}</div>
+      <hr style={{ margin: '16px 0' }} />
+
+      <h3 style={{ fontSize: 14 }}>monday.com Automation (optional)</h3>
+
+      <label style={{ display: 'block', marginBottom: 8 }}>
+        monday API token:{' '}
+        <input
+          type="password"
+          placeholder={settings.mondayApiToken === '(set)' ? '(already set)' : ''}
+          onChange={(e) => update({ mondayApiToken: e.target.value })}
+        />
+      </label>
+
+      <label style={{ display: 'block', marginBottom: 8 }}>
+        Webhook secret:{' '}
+        <input
+          type="password"
+          placeholder={settings.webhookSecret === '(set)' ? '(already set)' : ''}
+          onChange={(e) => update({ webhookSecret: e.target.value })}
+        />
+      </label>
+
+      <div style={{ fontSize: 13, color: '#555', marginTop: 8 }}>{status}</div>
     </div>
   );
 }

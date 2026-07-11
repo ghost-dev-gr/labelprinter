@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { printLabel } from '../utils/qzPrint';
+import { printLabelServerSide } from '../utils/settingsApi';
 
-export default function PrintForm({ template, connectionSettings }) {
+export default function PrintForm({ template, settings }) {
   const [values, setValues] = useState({});
   const [status, setStatus] = useState('');
   const [printing, setPrinting] = useState(false);
@@ -15,7 +15,7 @@ export default function PrintForm({ template, connectionSettings }) {
       setStatus('Design a label template first in the Label Designer tab.');
       return;
     }
-    if (!connectionSettings || !connectionSettings.printerOverride) {
+    if (!settings || !settings.printerName) {
       setStatus('Pick a printer in the Connection tab first.');
       return;
     }
@@ -23,10 +23,7 @@ export default function PrintForm({ template, connectionSettings }) {
     setPrinting(true);
     setStatus('');
     try {
-      await printLabel(connectionSettings.printerOverride, template, values, {
-        connSettings: connectionSettings,
-        copies: connectionSettings.copies
-      });
+      await printLabelServerSide(values);
       setStatus('Printed successfully.');
     } catch (err) {
       setStatus('Print failed: ' + err.message);

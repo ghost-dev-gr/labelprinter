@@ -13,6 +13,9 @@ RUN npm install --omit=dev
 
 COPY server.js ./
 COPY settingsStore.js ./
+COPY qz-tray.js ./
+COPY qzNodeShim.js ./
+COPY qzPrintNode.js ./
 COPY --from=build /app/dist ./dist
 
 ENV PORT=5175

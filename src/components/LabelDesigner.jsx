@@ -1,5 +1,4 @@
 import React, { useRef, useState } from 'react';
-import { saveTemplate } from '../utils/settingsApi';
 
 const PX_PER_MM = 4;
 
@@ -182,9 +181,7 @@ export default function LabelDesigner({ template, setTemplate }) {
         </table>
       )}
 
-      <button style={{ marginTop: 12 }} onClick={() => saveTemplate(template)}>
-        Save Template
-      </button>
+      <p style={{ marginTop: 12, fontSize: 12, color: '#777' }}>Changes save automatically.</p>
     </div>
   );
 }
