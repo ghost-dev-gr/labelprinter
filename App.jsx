@@ -8,9 +8,6 @@ import monday from 'monday-sdk-js';
 
 import { loadTemplate } from '@generated/utils/mondayData';
 import { loadConnectionSettings } from '@generated/utils/connectionSettings';
-import { printLabel } from '@generated/utils/qzPrint';
-import { PrintTestBoard } from '@api/BoardSDK';
-import PrintList from '@generated/components/PrintList';
 import LabelDesigner from '@generated/components/LabelDesigner';
 import ConnectionSettings from '@generated/components/ConnectionSettings';
 
@@ -37,83 +34,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  async function handleButtonPrint(itemId) {
-    console.log('[App] handleButtonPrint called for item:', itemId);
-    
-    try {
-      // Validate we have everything needed
-      if (!template.fields || template.fields.length === 0) {
-        mondayClient.execute('notice', {
-          message: 'Please design a label template first in the Label Designer',
-          type: 'error',
-          timeout: 5000
-        });
-        return;
-      }
-
-      if (!connectionSettings || !connectionSettings.printerOverride) {
-        mondayClient.execute('notice', {
-          message: 'Please configure printer in the Connection tab',
-          type: 'error',
-          timeout: 5000
-        });
-        return;
-      }
-
-      // Fetch the item data
-      const board = new PrintTestBoard(BOARD_ID);
-      const item = await board
-        .item(itemId)
-        .withColumns(['sku', 'price', 'totalPrice', 'quantity', 'printStatus'])
-        .execute();
-
-      if (!item) {
-        console.error('[App] Item not found:', itemId);
-        return;
-      }
-
-      console.log('[App] Printing item:', item);
-
-      const values = {
-        name: item.name || '',
-        sku: item.sku || '',
-        price: item.price || '',
-        totalPrice: item.totalPrice || '',
-        quantity: item.quantity || ''
-      };
-
-      const copies = item.quantity && Number(item.quantity) > 0 ? Number(item.quantity) : 1;
-
-      // Print the label
-      await printLabel(
-        connectionSettings.printerOverride,
-        template,
-        values,
-        COLUMNS,
-        { connSettings: connectionSettings, copies }
-      );
-
-      // Update status to Printed
-      await board.item(itemId).update({ printStatus: 'Printed' }).execute();
-
-      // Show success message
-      mondayClient.execute('notice', {
-        message: `Successfully printed ${item.name} (${copies} ${copies === 1 ? 'copy' : 'copies'})`,
-        type: 'success',
-        timeout: 5000
-      });
-
-      console.log('[App] Successfully printed item:', item.name);
-    } catch (err) {
-      console.error('[App] Failed to print from button:', err);
-      mondayClient.execute('notice', {
-        message: `Print failed: ${err.message}`,
-        type: 'error',
-        timeout: 5000
-      });
-    }
-  }
-
   useEffect(() => {
     // Load the real QZ Tray client library from the official CDN
     const qzScript = document.createElement('script');
@@ -122,48 +42,6 @@ export default function App() {
     qzScript.onload = () => console.log('QZ Tray library loaded (CDN):', typeof window.qz);
     qzScript.onerror = () => console.error('Failed to load QZ Tray library from CDN');
     document.head.appendChild(qzScript);
-
-    // Listen for ALL events to debug what monday sends
-    mondayClient.listen('context', (res) => {
-      console.log('[App] 📋 Context event:', JSON.stringify(res, null, 2));
-    });
-
-    mondayClient.listen('settings', (res) => {
-      console.log('[App] ⚙️ Settings event:', JSON.stringify(res, null, 2));
-    });
-
-    mondayClient.listen('events', (res) => {
-      console.log('[App] 🔔 Board event received:', JSON.stringify(res, null, 2));
-      
-      // Check if it's a button click event
-      if (res.type === 'button_click' || res.type === 'column_value_changed') {
-        console.log('[App] ✅ Button/column event detected!');
-        
-        if (res.data) {
-          const itemId = res.data.itemId || res.data.item_id;
-          const columnId = res.data.columnId || res.data.column_id;
-          
-          console.log('[App] Item ID:', itemId, 'Column ID:', columnId);
-          
-          // Check if it's our button column (button_mm52pm6n)
-          if (columnId === 'button_mm52pm6n' || res.type === 'button_click') {
-            console.log('[App] 🖨️ Print button clicked for item:', itemId);
-            setTimeout(() => handleButtonPrint(itemId), 500);
-          }
-        }
-      }
-    });
-
-    // Subscribe to board item events
-    mondayClient.api(`mutation {
-      subscribe_to_board_events(board_id: ${BOARD_ID}, column_id: "button_mm52pm6n") {
-        id
-      }
-    }`).then(res => {
-      console.log('[App] 📌 Subscribed to button column events:', res);
-    }).catch(err => {
-      console.error('[App] ❌ Failed to subscribe to events:', err);
-    });
 
     async function loadWorkspaceData() {
       try {
@@ -274,7 +152,7 @@ export default function App() {
               Thermal Label Printer
             </h1>
             <p className="text-xs text-muted-foreground">
-              Map monday.com board variables and dispatch pixel-perfect thermal labels directly via QZ Tray
+              Design your label layout and configure the QZ Tray connection - actual printing runs automatically via monday Automation
             </p>
           </div>
           
@@ -307,12 +185,8 @@ export default function App() {
           </div>
         </div>
 
-        <Tabs defaultValue="print" className="w-full space-y-6">
-          <TabsList className="grid w-full grid-cols-3 max-w-sm p-1 bg-secondary rounded-lg">
-            <TabsTrigger value="print" className="flex items-center gap-2 text-xs py-2 font-medium cursor-pointer">
-              <Printer className="w-3.5 h-3.5" />
-              Print Queue
-            </TabsTrigger>
+        <Tabs defaultValue="designer" className="w-full space-y-6">
+          <TabsList className="grid w-full grid-cols-2 max-w-xs p-1 bg-secondary rounded-lg">
             <TabsTrigger value="designer" className="flex items-center gap-2 text-xs py-2 font-medium cursor-pointer">
               <Layout className="w-3.5 h-3.5" />
               Label Designer
@@ -322,15 +196,6 @@ export default function App() {
               Connection
             </TabsTrigger>
           </TabsList>
-
-          <TabsContent value="print" className="outline-none">
-            <PrintList
-              boardId={boardId}
-              columns={COLUMNS}
-              template={template}
-              connectionSettings={connectionSettings}
-            />
-          </TabsContent>
 
           <TabsContent value="designer" className="outline-none">
             <LabelDesigner

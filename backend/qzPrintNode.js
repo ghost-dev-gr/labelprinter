@@ -5,6 +5,7 @@
 // with nobody having the Vibe app open at all.
 
 const qz = require('./qzNodeShim');
+const { loadSettings } = require('./settingsStore');
 
 let qzSecurityInitialized = false;
 function initQzSecurity() {
@@ -17,24 +18,31 @@ function initQzSecurity() {
   qzSecurityInitialized = true;
 }
 
-// env.TUNNEL_HOST / env.TUNNEL_PORT point at the cloudflared tunnel exposing
-// QZ Tray's insecure port (e.g. some-name.trycloudflare.com / 443, tunneled
-// through to localhost:8182 on the Windows PC running QZ Tray).
+// tunnelHost/tunnelPort come from settingsStore (persistent JSON file), not env
+// vars, since the cloudflared quick-tunnel URL changes every restart and
+// shouldn't require a redeploy to update.
+let connectedHost = null;
+
 async function ensureConnected() {
   initQzSecurity();
-  if (qz.websocket.isActive()) return;
 
-  const host = process.env.TUNNEL_HOST;
-  const port = Number(process.env.TUNNEL_PORT || 443);
-  if (!host) {
-    throw new Error('TUNNEL_HOST environment variable is not set.');
+  const { tunnelHost, tunnelPort } = loadSettings();
+  if (!tunnelHost) {
+    throw new Error('tunnelHost is not set - POST /settings with a tunnelHost first.');
+  }
+
+  // If already connected but to a different (now-stale) host, reconnect.
+  if (qz.websocket.isActive() && connectedHost === tunnelHost) return;
+  if (qz.websocket.isActive() && connectedHost !== tunnelHost) {
+    await qz.websocket.disconnect();
   }
 
   await qz.websocket.connect({
-    host,
+    host: tunnelHost,
     usingSecure: true,
-    port: { secure: [port], insecure: [port] }
+    port: { secure: [tunnelPort], insecure: [tunnelPort] }
   });
+  connectedHost = tunnelHost;
 }
 
 async function listPrinters() {

@@ -4,22 +4,25 @@
 
 const express = require('express');
 const { listPrinters, printLabel } = require('./qzPrintNode');
+const { loadSettings, saveSettings } = require('./settingsStore');
 
 const app = express();
 app.use(express.json());
 
-const MONDAY_API_TOKEN = process.env.MONDAY_API_TOKEN;
-const PRINTER_NAME = process.env.PRINTER_NAME || '';
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
+// Everything configurable - including the monday API token and webhook secret -
+// lives in settingsStore's persistent JSON file, not env vars. PORT and
+// SETTINGS_DIR are the only exceptions, since the app needs those just to find
+// and serve the settings file in the first place.
 
-// Template is configured via env var for now (JSON string) - same shape as the
-// browser app's saved template. Swap this for a real monday.storage fetch later.
-let TEMPLATE;
-try {
-  TEMPLATE = JSON.parse(process.env.LABEL_TEMPLATE_JSON || '{}');
-} catch (err) {
-  console.error('LABEL_TEMPLATE_JSON is not valid JSON:', err.message);
-  TEMPLATE = { widthMm: 100, heightMm: 60, rotation: 0, fields: [] };
+function checkSecret(req, res) {
+  const { webhookSecret } = loadSettings();
+  // No secret configured yet (first-time setup) - allow through so you can set one.
+  if (!webhookSecret) return true;
+  if (req.query.secret !== webhookSecret) {
+    res.status(401).json({ error: 'Invalid secret' });
+    return false;
+  }
+  return true;
 }
 
 const COLUMNS = [
@@ -30,11 +33,12 @@ const COLUMNS = [
 ];
 
 async function mondayApi(query, variables) {
+  const { mondayApiToken } = loadSettings();
   const res = await fetch('https://api.monday.com/v2', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: MONDAY_API_TOKEN
+      Authorization: mondayApiToken
     },
     body: JSON.stringify({ query, variables })
   });
@@ -87,6 +91,27 @@ app.get('/printers', async (req, res) => {
   }
 });
 
+// View current persistent settings (tunnel host/port, printer name, label
+// template) - update them with POST below, no redeploy needed either way.
+app.get('/settings', (req, res) => {
+  res.json(loadSettings());
+});
+
+app.post('/settings', (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const { tunnelHost, tunnelPort, printerName, labelTemplate, mondayApiToken, webhookSecret } = req.body || {};
+  const updated = saveSettings({
+    ...(tunnelHost !== undefined && { tunnelHost }),
+    ...(tunnelPort !== undefined && { tunnelPort: Number(tunnelPort) }),
+    ...(printerName !== undefined && { printerName }),
+    ...(labelTemplate !== undefined && { labelTemplate }),
+    ...(mondayApiToken !== undefined && { mondayApiToken }),
+    ...(webhookSecret !== undefined && { webhookSecret })
+  });
+  // Don't echo secrets back in the response.
+  res.json({ ...updated, mondayApiToken: updated.mondayApiToken ? '(set)' : '', webhookSecret: updated.webhookSecret ? '(set)' : '' });
+});
+
 app.post('/print-webhook', async (req, res) => {
   // monday sends a one-time verification challenge when you first register the
   // webhook URL - must echo it back exactly or the webhook registration fails.
@@ -94,9 +119,7 @@ app.post('/print-webhook', async (req, res) => {
     return res.json({ challenge: req.body.challenge });
   }
 
-  if (WEBHOOK_SECRET && req.query.secret !== WEBHOOK_SECRET) {
-    return res.status(401).json({ error: 'Invalid webhook secret' });
-  }
+  if (!checkSecret(req, res)) return;
 
   const event = req.body.event || {};
   const itemId = event.pulseId || event.itemId;
@@ -112,10 +135,11 @@ app.post('/print-webhook', async (req, res) => {
   res.json({ ok: true });
 
   try {
+    const { printerName, labelTemplate } = loadSettings();
     const values = await getItemValues(itemId);
     const copies = values.quantity && Number(values.quantity) > 0 ? Number(values.quantity) : 1;
 
-    await printLabel(PRINTER_NAME, TEMPLATE, values, COLUMNS, copies);
+    await printLabel(printerName, labelTemplate, values, COLUMNS, copies);
     console.log(`Printed item ${itemId} (${values.name})`);
 
     if (boardId) {
