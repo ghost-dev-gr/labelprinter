@@ -81,6 +81,16 @@ async function markPrinted(itemId, boardId) {
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
+// Pure echo endpoint - responds with the exact same body it received. Useful
+// for inspecting what monday's automation actually sends before wiring up real
+// logic, and this also naturally satisfies monday's webhook verification
+// handshake (it sends { challenge: "..." } once when you register the URL,
+// and expects that same value echoed back - which a plain echo does for free).
+app.post('/webhookv1', (req, res) => {
+  console.log('[webhookv1] received:', JSON.stringify(req.body));
+  res.json(req.body);
+});
+
 app.get('/printers', async (req, res) => {
   try {
     const printers = await listPrinters();
