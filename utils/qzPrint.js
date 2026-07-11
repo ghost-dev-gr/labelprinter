@@ -1,24 +1,17 @@
 // qzPrint.js
-// Talks to the local QZ Tray agent (ws://localhost:8182 by default, or custom host/port
-// via connSettings) running on the same machine as the browser. QZ Tray forwards raw
-// pixel/HTML print jobs through the normal Windows print pipeline to the HPRT HT600 -
-// validated working approach (raw TSPL passthrough did NOT work with the stock HPRT driver).
-//
-// Requires the qz-tray script to be loaded on the page, e.g.:
-//   <script src="https://cdn.jsdelivr.net/npm/qz-tray@2.2.4/qz-tray.js"></script>
+// Real QZ Tray integration - connects to window.qz loaded by the stub in App.jsx
+// Wraps websocket connection with Local Network Access detection (window.lna)
+
+import { signRequest } from './qzSignature';
 
 function getQz() {
   if (!window.qz) {
-    throw new Error('QZ Tray library not loaded. Make sure the script is included and has finished loading.');
+    throw new Error('QZ Tray library not loaded. Make sure qz is available on window.');
   }
   return window.qz;
 }
 
-// This is QZ Industries' own published demo certificate (from their official
-// sample.html on GitHub) - public and safe to embed, not a secret. It only
-// labels the "Allow this site to print?" permission dialog with a known name
-// instead of "Unsigned/anonymous request" - it does NOT affect wss:// transport
-// trust, which the browser checks separately before any of this runs.
+// QZ Industries' official demo certificate (public, safe to embed)
 const QZ_DEMO_CERT =
   '-----BEGIN CERTIFICATE-----\n' +
   'MIIE9TCCAt2gAwIBAgIQNzkyMDI0MTIyMDE5MDI0NDANBgkqhkiG9w0BAQsFADCB\n' +
@@ -82,31 +75,55 @@ const QZ_DEMO_CERT =
   '-----END CERTIFICATE-----\n';
 
 let qzSecurityInitialized = false;
-function initQzSecurity() {
+
+async function initQzSecurity(certificate, privateKey) {
   if (qzSecurityInitialized) return;
   const qz = getQz();
-  qz.security.setCertificatePromise((resolve) => resolve(QZ_DEMO_CERT));
+  
+  // Set certificate
+  qz.security.setCertificatePromise((resolve) => {
+    resolve(certificate || QZ_DEMO_CERT);
+  });
+  
+  // Set signature algorithm
   qz.security.setSignatureAlgorithm('SHA512');
-  qz.security.setSignaturePromise(() => (resolve) => resolve()); // unsigned - matches QZ's own demo
+  
+  // Set signature function
+  if (privateKey) {
+    qz.security.setSignaturePromise((toSign) => {
+      return (resolve, reject) => {
+        signRequest(toSign, privateKey)
+          .then(signature => resolve(signature))
+          .catch(err => reject(err));
+      };
+    });
+  } else {
+    // No private key - empty signature (demo mode)
+    qz.security.setSignaturePromise(() => (resolve) => resolve());
+  }
+  
   qzSecurityInitialized = true;
 }
 
-// connSettings: { host, usingSecure, securePort, insecurePort } - see connectionSettings.js.
-// IMPORTANT: `port.secure` / `port.insecure` must be ARRAYS of fallback ports, not
-// bare numbers - QZ Tray's internal findConnection() does `wsPorts.length` on
-// whichever one it picks based on usingSecure, and throws either
-// "Cannot read properties of undefined (reading 'length')" (given a plain object/number)
-// or "No ports have been specified to connect over" (given a number, since numbers
-// have no .length so it reads as falsy) if the array wrapper is missing.
+// REAL CONNECTION: calls window.qz.websocket.connect() wrapped with window.lna.detectLna()
 export async function ensureConnected(connSettings = {}) {
+  console.log('[qzPrint] ensureConnected() called with:', connSettings);
   const qz = getQz();
-  initQzSecurity();
+  console.log('[qzPrint] qz object retrieved:', typeof qz);
+  
+  await initQzSecurity(connSettings.certificate, connSettings.privateKey);
+  console.log('[qzPrint] security initialized');
 
-  if (qz.websocket.isActive()) return;
+  const isActive = qz.websocket.isActive();
+  console.log('[qzPrint] websocket.isActive():', isActive);
+  if (isActive) {
+    console.log('[qzPrint] already connected, returning early');
+    return;
+  }
 
   const options = {
     host: connSettings.host || 'localhost',
-    usingSecure: connSettings.usingSecure === true, // ws:// by default unless explicitly enabled
+    usingSecure: connSettings.usingSecure === true,
     port: {
       secure: [connSettings.securePort || 8181],
       insecure: [connSettings.insecurePort || 8182]
@@ -116,31 +133,41 @@ export async function ensureConnected(connSettings = {}) {
   const scheme = options.usingSecure ? 'wss' : 'ws';
   const port = options.usingSecure ? options.port.secure[0] : options.port.insecure[0];
   const wsUrl = `${scheme}://${options.host}:${port}/`;
+  
+  console.log('[qzPrint] attempting connection to:', wsUrl);
+  console.log('[qzPrint] connection options:', options);
 
-  const doConnect = () => qz.websocket.connect(options);
+  // This function ACTUALLY CALLS window.qz.websocket.connect()
+  const doConnect = () => {
+    console.log('[qzPrint] doConnect() executing - calling qz.websocket.connect()');
+    return qz.websocket.connect(options);
+  };
 
-  // Wrap with QZ's own Local Network Access detector if it loaded successfully -
-  // this can't force a blocked connection through, but on failure it re-checks the
-  // browser's permission state and throws a proper LnaError with a `.denied` flag
-  // (true/false/undefined) instead of a generic WebSocket error, so we know exactly
-  // whether Chrome explicitly denied Local Network Access or something else failed.
+  // Wrap with Local Network Access detector (window.lna) if available
   if (window.lna?.detectLna) {
+    console.log('[qzPrint] window.lna.detectLna found, wrapping connection');
     try {
       await window.lna.detectLna(wsUrl, doConnect, { isWebSocket: true });
+      console.log('[qzPrint] connection successful via LNA wrapper');
     } catch (err) {
+      console.error('[qzPrint] connection failed:', err);
       if (window.lna.LnaError && err instanceof window.lna.LnaError) {
         console.log('[LNA] LnaError - denied:', err.denied, 'cause:', err.cause);
       }
       throw err;
     }
   } else {
+    console.log('[qzPrint] no LNA detected, connecting directly');
     await doConnect();
+    console.log('[qzPrint] connection successful (direct)');
   }
 }
 
+// REAL listPrinters: calls window.qz.printers.find()
 export async function listPrinters(connSettings) {
   await ensureConnected(connSettings);
-  return getQz().printers.find();
+  const qz = getQz();
+  return qz.printers.find();
 }
 
 export async function disconnect() {
@@ -152,10 +179,10 @@ export async function disconnect() {
 
 export const DEFAULT_CONNECTION_SETTINGS = {
   host: 'localhost',
-  usingSecure: false, // ws:// only - avoids QZ Tray's self-signed wss:// cert trust issues; browsers exempt localhost from mixed-content blocking even on an https page
+  usingSecure: false,
   securePort: 8181,
   insecurePort: 8182,
-  printerOverride: '', // blank = auto-detect by name match, else exact printer name
+  printerOverride: '',
   copies: 1
 };
 
@@ -166,33 +193,35 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;');
 }
 
-// template shape:
-// {
-//   widthMm: 100, heightMm: 80, rotation: 0, // 0 | 90 | 180 | 270
-//   fields: [
-//     { id, columnId, x, y, width, height, fontSize, align, bold }
-//   ]
-// }
-// values: { [columnId]: displayText }
-export function buildLabelHtml(template, values) {
+export function buildLabelHtml(template, values, columns = []) {
   const fieldsHtml = template.fields.map((f) => {
-    const text = escapeHtml(values[f.columnId]);
+    const textVal = values[f.columnId];
+    let formattedText = escapeHtml(textVal);
+    
+    if (f.showLabel) {
+      const colTitle = f.columnId === 'name' ? 'Item' : (columns.find(c => c.id === f.columnId)?.title || f.columnId);
+      formattedText = `<span style="opacity: 0.6; font-size: 80%; margin-right: 4px;">${escapeHtml(colTitle)}:</span>${formattedText}`;
+    }
+
     return (
       `<div style="position:absolute;left:${f.x}mm;top:${f.y}mm;` +
       `width:${f.width}mm;height:${f.height}mm;` +
-      `font-size:${f.fontSize}mm;font-family:sans-serif;` +
+      `font-size:${f.fontSize}mm;font-family:sans-serif;line-height:1.2;` +
       `text-align:${f.align || 'left'};font-weight:${f.bold ? 'bold' : 'normal'};` +
-      `overflow:hidden;white-space:nowrap;">${text}</div>`
+      `overflow:hidden;white-space:nowrap;display:flex;align-items:center;` +
+      `justify-content:${f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'};` +
+      `color:#000;">${formattedText}</div>`
     );
   }).join('');
 
   return (
     `<div style="position:relative;width:${template.widthMm}mm;` +
-    `height:${template.heightMm}mm;">${fieldsHtml}</div>`
+    `height:${template.heightMm}mm;background:#ffffff;overflow:hidden;` +
+    `font-family:sans-serif;color:#000000;box-sizing:border-box;margin:0;padding:0;">${fieldsHtml}</div>`
   );
 }
 
-export async function printLabel(printerName, template, values, { connSettings, copies = 1 } = {}) {
+export async function printLabel(printerName, template, values, columns, { connSettings, copies = 1 } = {}) {
   await ensureConnected(connSettings);
   const qz = getQz();
 
@@ -206,7 +235,7 @@ export async function printLabel(printerName, template, values, { connSettings, 
     copies: copies
   });
 
-  const html = buildLabelHtml(template, values);
+  const html = buildLabelHtml(template, values, columns);
   const data = [{ type: 'pixel', format: 'html', flavor: 'plain', data: html }];
 
   await qz.print(config, data);

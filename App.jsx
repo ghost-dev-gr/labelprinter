@@ -2,88 +2,252 @@
 // Label Printer board view: Print items, Design labels, Configure QZ Tray connection
 
 import React, { useEffect, useState } from 'react';
-import { monday, getBoardColumns, getBoardItems, loadTemplate, DEFAULT_TEMPLATE } from './mondayData';
-import { loadConnectionSettings } from './connectionSettings';
-import PrintList from './PrintList';
-import LabelDesigner from './LabelDesigner';
-import ConnectionSettings from './ConnectionSettings';
-import lnaSource from './lnaSource';
-import qzTraySource from './qzTraySource';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@components/ui/tabs';
+import { Printer, Layout, Settings, AlertCircle } from 'lucide-react';
+import monday from 'monday-sdk-js';
+
+import { loadTemplate } from '@generated/utils/mondayData';
+import { loadConnectionSettings } from '@generated/utils/connectionSettings';
+import { printLabel } from '@generated/utils/qzPrint';
+import { PrintTestBoard } from '@api/BoardSDK';
+import PrintList from '@generated/components/PrintList';
+import LabelDesigner from '@generated/components/LabelDesigner';
+import ConnectionSettings from '@generated/components/ConnectionSettings';
+
+const mondayClient = monday();
+
+const BOARD_ID = 18421089379;
+
+const COLUMNS = [
+  { id: 'sku', title: 'SKU' },
+  { id: 'price', title: 'Price' },
+  { id: 'totalPrice', title: 'Total Price' },
+  { id: 'quantity', title: 'Quantity' }
+];
 
 export default function App() {
-  const [boardId, setBoardId] = useState(null);
-  const [columns, setColumns] = useState([]);
-  const [items, setItems] = useState([]);
-  const [template, setTemplate] = useState(DEFAULT_TEMPLATE);
-  const [connSettings, setConnSettings] = useState(loadConnectionSettings());
-  const [tab, setTab] = useState('print');
-  const [error, setError] = useState(null);
+  const [boardId, setBoardId] = useState(BOARD_ID);
+  const [template, setTemplate] = useState({
+    widthMm: 100,
+    heightMm: 60,
+    rotation: 0,
+    fields: []
+  });
+  const [connectionSettings, setConnectionSettings] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  async function handleButtonPrint(itemId) {
+    console.log('[App] handleButtonPrint called for item:', itemId);
+    
+    try {
+      // Validate we have everything needed
+      if (!template.fields || template.fields.length === 0) {
+        mondayClient.execute('notice', {
+          message: 'Please design a label template first in the Label Designer',
+          type: 'error',
+          timeout: 5000
+        });
+        return;
+      }
+
+      if (!connectionSettings || !connectionSettings.printerOverride) {
+        mondayClient.execute('notice', {
+          message: 'Please configure printer in the Connection tab',
+          type: 'error',
+          timeout: 5000
+        });
+        return;
+      }
+
+      // Fetch the item data
+      const board = new PrintTestBoard(BOARD_ID);
+      const item = await board
+        .item(itemId)
+        .withColumns(['sku', 'price', 'totalPrice', 'quantity', 'printStatus'])
+        .execute();
+
+      if (!item) {
+        console.error('[App] Item not found:', itemId);
+        return;
+      }
+
+      console.log('[App] Printing item:', item);
+
+      const values = {
+        name: item.name || '',
+        sku: item.sku || '',
+        price: item.price || '',
+        totalPrice: item.totalPrice || '',
+        quantity: item.quantity || ''
+      };
+
+      const copies = item.quantity && Number(item.quantity) > 0 ? Number(item.quantity) : 1;
+
+      // Print the label
+      await printLabel(
+        connectionSettings.printerOverride,
+        template,
+        values,
+        COLUMNS,
+        { connSettings: connectionSettings, copies }
+      );
+
+      // Update status to Printed
+      await board.item(itemId).update({ printStatus: 'Printed' }).execute();
+
+      // Show success message
+      mondayClient.execute('notice', {
+        message: `Successfully printed ${item.name} (${copies} ${copies === 1 ? 'copy' : 'copies'})`,
+        type: 'success',
+        timeout: 5000
+      });
+
+      console.log('[App] Successfully printed item:', item.name);
+    } catch (err) {
+      console.error('[App] Failed to print from button:', err);
+      mondayClient.execute('notice', {
+        message: `Print failed: ${err.message}`,
+        type: 'error',
+        timeout: 5000
+      });
+    }
+  }
 
   useEffect(() => {
-    // Load the QZ Tray client library. Its source is embedded as a string constant
-    // (qzTraySource, the same file previously loaded from the jsdelivr CDN) and
-    // injected inline via textContent, matching lnaSource below - avoids depending
-    // on any external CDN or this project's static asset hosting being reachable.
-    const script = document.createElement('script');
-    script.textContent = qzTraySource;
-    document.head.appendChild(script);
-    console.log('QZ Tray library loaded (inline):', typeof window.qz);
+    // Load the real QZ Tray client library from the official CDN
+    const qzScript = document.createElement('script');
+    qzScript.src = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2.4/qz-tray.min.js';
+    qzScript.async = true;
+    qzScript.onload = () => console.log('QZ Tray library loaded (CDN):', typeof window.qz);
+    qzScript.onerror = () => console.error('Failed to load QZ Tray library from CDN');
+    document.head.appendChild(qzScript);
 
-    // Load QZ's Local Network Access detection helper. Its source is embedded as a
-    // string constant (lnaSource, copied verbatim from
-    // https://demo.qz.io/js/sample/lna.bundle.min.js) and injected inline via
-    // textContent rather than a src= URL, so it doesn't depend on this project's
-    // static asset hosting (which returned its HTML fallback page instead of the
-    // file when loaded via src, causing a "Unexpected token '<'" syntax error).
-    // Exposes window.lna.detectLna(), used in qzPrint.js to wrap the connect() call
-    // and get a proper LnaError with a .denied flag instead of a generic failure.
-    // Runs natively in Chrome/Brave/Edge - no polyfills needed (those in QZ's own
-    // demo page are only for legacy browsers like IE11).
-    const lnaScript = document.createElement('script');
-    lnaScript.textContent = lnaSource;
-    document.head.appendChild(lnaScript);
-    console.log('LNA detection library loaded (inline):', typeof window.lna);
+    // Listen for ALL events to debug what monday sends
+    mondayClient.listen('context', (res) => {
+      console.log('[App] 📋 Context event:', JSON.stringify(res, null, 2));
+    });
 
-    monday.listen('context', async (res) => {
-      try {
-        let id = res?.data?.boardId || res?.data?.boardIds?.[0];
+    mondayClient.listen('settings', (res) => {
+      console.log('[App] ⚙️ Settings event:', JSON.stringify(res, null, 2));
+    });
+
+    mondayClient.listen('events', (res) => {
+      console.log('[App] 🔔 Board event received:', JSON.stringify(res, null, 2));
+      
+      // Check if it's a button click event
+      if (res.type === 'button_click' || res.type === 'column_value_changed') {
+        console.log('[App] ✅ Button/column event detected!');
         
-        if (!id) {
-          console.warn('No boardId in context, using connected board 18421089379');
-          id = 18421089379;
+        if (res.data) {
+          const itemId = res.data.itemId || res.data.item_id;
+          const columnId = res.data.columnId || res.data.column_id;
+          
+          console.log('[App] Item ID:', itemId, 'Column ID:', columnId);
+          
+          // Check if it's our button column (button_mm52pm6n)
+          if (columnId === 'button_mm52pm6n' || res.type === 'button_click') {
+            console.log('[App] 🖨️ Print button clicked for item:', itemId);
+            setTimeout(() => handleButtonPrint(itemId), 500);
+          }
         }
-        
-        setBoardId(id);
-        
-        const [cols, its, tpl] = await Promise.all([
-          getBoardColumns(id),
-          getBoardItems(id),
-          loadTemplate(id)
-        ]);
-        
-        setColumns(cols);
-        setItems(its);
-        setTemplate(tpl);
-        setLoading(false);
-      } catch (err) {
-        console.error('Error loading board data:', err);
-        setError(err.message);
-        setLoading(false);
       }
     });
 
+    // Subscribe to board item events
+    mondayClient.api(`mutation {
+      subscribe_to_board_events(board_id: ${BOARD_ID}, column_id: "button_mm52pm6n") {
+        id
+      }
+    }`).then(res => {
+      console.log('[App] 📌 Subscribed to button column events:', res);
+    }).catch(err => {
+      console.error('[App] ❌ Failed to subscribe to events:', err);
+    });
+
+    async function loadWorkspaceData() {
+      try {
+        const tpl = await loadTemplate(BOARD_ID);
+
+        if (tpl) {
+          setTemplate(tpl);
+        } else {
+          // Setup initial user-friendly fallback fields
+          setTemplate({
+            widthMm: 100,
+            heightMm: 60,
+            rotation: 0,
+            fields: [
+              {
+                id: 'f-init-name',
+                columnId: 'name',
+                x: 5,
+                y: 8,
+                width: 90,
+                height: 10,
+                fontSize: 4.5,
+                align: 'left',
+                bold: true,
+                showLabel: false
+              },
+              {
+                id: 'f-init-sku',
+                columnId: 'sku',
+                x: 5,
+                y: 22,
+                width: 45,
+                height: 8,
+                fontSize: 3.5,
+                align: 'left',
+                bold: false,
+                showLabel: true
+              },
+              {
+                id: 'f-init-price',
+                columnId: 'price',
+                x: 55,
+                y: 22,
+                width: 40,
+                height: 8,
+                fontSize: 4,
+                align: 'right',
+                bold: true,
+                showLabel: true
+              }
+            ]
+          });
+        }
+
+        // Machine-specific connection config loaded from monday storage
+        const conn = await loadConnectionSettings();
+        console.log('[App] Loaded connection settings:', conn);
+        if (conn) {
+          setConnectionSettings(conn);
+        }
+        
+        setLoading(false);
+      } catch (err) {
+        console.error('Error loading workspace labels data:', err);
+        setError(err.message);
+        setLoading(false);
+      }
+    }
+
+    loadWorkspaceData();
+
     return () => {
-      script.remove();
-      lnaScript.remove();
+      if (qzScript.parentNode) {
+        qzScript.remove();
+      }
     };
   }, []);
 
   if (error) {
     return (
       <div className="min-h-screen bg-background p-6">
-        <div className="rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
-          Error: {error}
+        <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <span>Error loading print database context: {error}</span>
         </div>
       </div>
     );
@@ -92,72 +256,121 @@ export default function App() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-sm text-muted-foreground">Loading board data...</div>
+        <div className="text-center space-y-4">
+          <div className="w-9 h-9 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs text-muted-foreground font-medium">Initializing Workspace Environment...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-40 w-full border-b border-border bg-background">
-        <div className="flex h-14 items-center px-6">
-          <h1 className="text-base font-semibold text-foreground">Label Printer</h1>
-          <div className="ml-8 flex gap-1">
+    <div className="min-h-screen bg-background p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div className="flex justify-between items-start border-b border-border pb-5">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
+              <Printer className="w-7 h-7 text-primary" />
+              Thermal Label Printer
+            </h1>
+            <p className="text-xs text-muted-foreground">
+              Map monday.com board variables and dispatch pixel-perfect thermal labels directly via QZ Tray
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-secondary/50 px-3 py-1.5 rounded-lg border border-border">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-semibold text-foreground uppercase tracking-wider">Workspace Sync Active</span>
+            </div>
+            
             <button
-              onClick={() => setTab('print')}
-              className={`px-4 py-2 text-sm font-medium transition-colors rounded-md ${
-                tab === 'print'
-                  ? 'bg-secondary text-foreground'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
-              }`}
-              aria-pressed={tab === 'print'}
+              onClick={async () => {
+                console.log('[App] 🧪 Test button clicked - checking event system');
+                console.log('[App] Current settings:', connectionSettings);
+                console.log('[App] Current template:', template);
+                
+                // Try to get context
+                const context = await mondayClient.get('context');
+                console.log('[App] Monday context:', context);
+                
+                mondayClient.execute('notice', {
+                  message: 'Test: App is running and can communicate with monday.com!',
+                  type: 'success',
+                  timeout: 3000
+                });
+              }}
+              className="h-8 px-3 rounded-md bg-muted text-foreground text-[10px] font-semibold hover:bg-muted/80 transition-all border border-border"
             >
-              Print
-            </button>
-            <button
-              onClick={() => setTab('design')}
-              className={`px-4 py-2 text-sm font-medium transition-colors rounded-md ${
-                tab === 'design'
-                  ? 'bg-secondary text-foreground'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
-              }`}
-              aria-pressed={tab === 'design'}
-            >
-              Design Label
-            </button>
-            <button
-              onClick={() => setTab('connection')}
-              className={`px-4 py-2 text-sm font-medium transition-colors rounded-md ${
-                tab === 'connection'
-                  ? 'bg-secondary text-foreground'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
-              }`}
-              aria-pressed={tab === 'connection'}
-            >
-              Connection
+              🧪 Test Connection
             </button>
           </div>
         </div>
-      </header>
 
-      <main className="p-6">
-        {tab === 'print' && (
-          <PrintList items={items} template={template} connSettings={connSettings} />
-        )}
+        <Tabs defaultValue="print" className="w-full space-y-6">
+          <TabsList className="grid w-full grid-cols-3 max-w-sm p-1 bg-secondary rounded-lg">
+            <TabsTrigger value="print" className="flex items-center gap-2 text-xs py-2 font-medium cursor-pointer">
+              <Printer className="w-3.5 h-3.5" />
+              Print Queue
+            </TabsTrigger>
+            <TabsTrigger value="designer" className="flex items-center gap-2 text-xs py-2 font-medium cursor-pointer">
+              <Layout className="w-3.5 h-3.5" />
+              Label Designer
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="flex items-center gap-2 text-xs py-2 font-medium cursor-pointer">
+              <Settings className="w-3.5 h-3.5" />
+              Connection
+            </TabsTrigger>
+          </TabsList>
 
-        {tab === 'design' && (
-          <LabelDesigner
-            boardId={boardId}
-            columns={columns}
-            template={template}
-            setTemplate={setTemplate}
-          />
-        )}
+          <TabsContent value="print" className="outline-none">
+            <PrintList
+              boardId={boardId}
+              columns={COLUMNS}
+              template={template}
+              connectionSettings={connectionSettings}
+            />
+          </TabsContent>
 
-        {tab === 'connection' && (
-          <ConnectionSettings settings={connSettings} setSettings={setConnSettings} />
-        )}
-      </main>
+          <TabsContent value="designer" className="outline-none">
+            <LabelDesigner
+              boardId={boardId}
+              columns={COLUMNS}
+              template={template}
+              setTemplate={setTemplate}
+            />
+          </TabsContent>
+
+          <TabsContent value="settings" className="outline-none">
+            <ConnectionSettings
+              boardId={boardId}
+              connectionSettings={connectionSettings}
+              setConnectionSettings={setConnectionSettings}
+            />
+          </TabsContent>
+        </Tabs>
+
+        {/* Info footer */}
+        <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-primary mt-0.5" />
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-foreground">Interactive Hardware Notice</p>
+              <p className="text-xs text-muted-foreground leading-normal">
+                Make sure the QZ Tray desktop app is active in your terminal system tray to process background prints. You can grab the production client at{' '}
+                <a
+                  href="https://qz.io/download/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline font-medium"
+                >
+                  qz.io/download
+                </a>.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
