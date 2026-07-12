@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 5175
 
 const dbDir = path.resolve(__dirname, 'db')
 const distDir = path.resolve(__dirname, 'dist')
-const { storageHandler, webhookTest, webhookTest2 } = createHandlers(dbDir)
+const { storageHandler, webhookTest, webhookTest2, webhookInboxHandler } = createHandlers(dbDir)
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -62,6 +62,7 @@ const server = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0]
 
   if (urlPath === '/api/storage') return storageHandler(req, res)
+  if (urlPath === '/api/webhook-inbox') return webhookInboxHandler(req, res)
   if (urlPath === '/webhook/test') return webhookTest(req, res)
   if (urlPath === '/webhook/test2') return webhookTest2(req, res)
 

@@ -3,7 +3,8 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { PrintTestBoard } from '@api/BoardSDK';
 import { saveTemplate } from '@generated/utils/mondayData';
-import { LayoutGrid, Sparkles } from 'lucide-react';
+import { flattenObject } from '@generated/utils/flatten';
+import { LayoutGrid, Sparkles, Webhook } from 'lucide-react';
 
 const PX_PER_MM = 4.2; // Visual scale for canvas
 
@@ -13,6 +14,9 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
   const [saving, setSaving] = useState(false);
   const [allColumns, setAllColumns] = useState([]);
   const [sampleData, setSampleData] = useState({});
+  const [webhookFields, setWebhookFields] = useState([]);
+  const [webhookLoading, setWebhookLoading] = useState(false);
+  const [webhookError, setWebhookError] = useState('');
 
   // Fetch all columns and sample data from the board
   useEffect(() => {
@@ -84,6 +88,46 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
 
     fetchColumnsAndSample();
   }, [boardId]);
+
+  async function importWebhookFields() {
+    setWebhookLoading(true);
+    setWebhookError('');
+    try {
+      const res = await fetch('/api/webhook-inbox');
+      const json = await res.json();
+
+      if (!json.payload) {
+        setWebhookError('No webhook received yet. Trigger one (e.g. /webhook/test2) first.');
+        setWebhookFields([]);
+        return;
+      }
+
+      const flat = flattenObject(json.payload);
+      const fields = Object.entries(flat).map(([webhookPath, value]) => ({
+        id: `webhook:${webhookPath}`,
+        title: webhookPath,
+        value,
+      }));
+
+      setWebhookFields(fields);
+
+      // Make these selectable/labelable like any other field, and preview their real values.
+      setAllColumns((prev) => [
+        ...prev.filter((c) => !c.id.startsWith('webhook:')),
+        ...fields.map((f) => ({ id: f.id, title: f.title })),
+      ]);
+      setSampleData((prev) => {
+        const merged = { ...prev };
+        fields.forEach((f) => { merged[f.id] = String(f.value ?? ''); });
+        return merged;
+      });
+    } catch (err) {
+      console.error('Failed to import webhook fields:', err);
+      setWebhookError('Failed to load the last webhook payload.');
+    } finally {
+      setWebhookLoading(false);
+    }
+  }
 
   function updateField(fieldId, patch) {
     setTemplate((t) => ({
@@ -263,6 +307,52 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
               );
             })}
           </div>
+        </div>
+
+        <div className="bg-card rounded-xl border border-border p-5 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Webhook className="w-4 h-4 text-primary" />
+                From Last Webhook
+              </h3>
+              <p className="text-xs text-muted-foreground mt-1">Pull fields from the most recent webhook payload</p>
+            </div>
+            <button
+              onClick={importWebhookFields}
+              disabled={webhookLoading}
+              className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-all disabled:opacity-50 flex-shrink-0"
+            >
+              {webhookLoading ? 'Loading...' : 'Import'}
+            </button>
+          </div>
+
+          {webhookError && (
+            <p className="text-[11px] text-destructive">{webhookError}</p>
+          )}
+
+          {webhookFields.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {webhookFields.map((f) => {
+                const isUsed = template.fields.some(field => field.columnId === f.id);
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => addField(f.id)}
+                    title={String(f.value)}
+                    className={`h-8 px-3 rounded-md text-xs font-medium border flex items-center gap-1.5 transition-all ${
+                      isUsed
+                        ? 'border-primary/30 bg-primary/5 text-primary'
+                        : 'border-border bg-background text-muted-foreground hover:text-foreground hover:bg-secondary'
+                    }`}
+                  >
+                    <span>+</span>
+                    {f.title}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 

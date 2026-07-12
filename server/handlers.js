@@ -103,5 +103,16 @@ export function createHandlers(dbDir) {
     },
   })
 
-  return { storageHandler, webhookTest, webhookTest2 }
+  // Lets the frontend read back the most recent webhook payload (for the Label Designer's
+  // "import fields from last webhook" picker and App.jsx's auto-print polling).
+  function webhookInboxHandler(req, res) {
+    try {
+      const raw = fs.readFileSync(inboxFile, 'utf-8')
+      respondJson(res, 200, JSON.parse(raw))
+    } catch {
+      respondJson(res, 200, { receivedAt: null, payload: null })
+    }
+  }
+
+  return { storageHandler, webhookTest, webhookTest2, webhookInboxHandler }
 }

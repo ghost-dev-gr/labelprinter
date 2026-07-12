@@ -1,7 +1,7 @@
 // App.jsx
 // Label Printer board view: Print items, Design labels, Configure QZ Tray connection
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@components/ui/tabs';
 import { Printer, Layout, Settings, AlertCircle } from 'lucide-react';
 import monday from 'monday-sdk-js';
@@ -9,6 +9,7 @@ import monday from 'monday-sdk-js';
 import { loadTemplate } from '@generated/utils/mondayData';
 import { loadConnectionSettings } from '@generated/utils/connectionSettings';
 import { printLabel } from '@generated/utils/qzPrint';
+import { flattenObject } from '@generated/utils/flatten';
 import { PrintTestBoard } from '@api/BoardSDK';
 import LabelDesigner from '@generated/components/LabelDesigner';
 import ConnectionSettings from '@generated/components/ConnectionSettings';
@@ -35,6 +36,7 @@ export default function App() {
   const [connectionSettings, setConnectionSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const lastWebhookAtRef = useRef(null);
 
   async function handleButtonPrint(itemId) {
     console.log('[App] handleButtonPrint called for item:', itemId);
@@ -240,6 +242,67 @@ export default function App() {
       }
     };
   }, []);
+
+  // Auto-print: poll for new webhook payloads and print using whatever fields were
+  // mapped in the Label Designer's "From Last Webhook" picker. Only webhooks that arrive
+  // after the app starts trigger a print (whatever's already in the inbox is "seen" first).
+  useEffect(() => {
+    let cancelled = false;
+
+    async function markExistingInboxAsSeen() {
+      if (lastWebhookAtRef.current !== null) return;
+      try {
+        const res = await fetch('/api/webhook-inbox');
+        const json = await res.json();
+        if (!cancelled && lastWebhookAtRef.current === null) {
+          lastWebhookAtRef.current = json.receivedAt || 'none';
+        }
+      } catch (err) {
+        console.error('[App] Failed to read initial webhook inbox state:', err);
+      }
+    }
+
+    async function checkForNewWebhook() {
+      try {
+        const res = await fetch('/api/webhook-inbox');
+        const json = await res.json();
+
+        if (!json.receivedAt || json.receivedAt === lastWebhookAtRef.current) return;
+        lastWebhookAtRef.current = json.receivedAt;
+
+        if (!template.fields || template.fields.length === 0) return;
+        if (!connectionSettings || !connectionSettings.printerOverride) return;
+
+        const flat = flattenObject(json.payload);
+        const values = {};
+        template.fields.forEach((f) => {
+          values[f.columnId] = flat[f.columnId] ?? '';
+        });
+
+        console.log('[App] Auto-printing from new webhook payload:', values);
+
+        await printLabel(
+          connectionSettings.printerOverride,
+          template,
+          values,
+          COLUMNS,
+          { connSettings: connectionSettings, copies: 1 }
+        );
+
+        mondayClient.execute('notice', {
+          message: 'Auto-printed label from webhook data',
+          type: 'success',
+          timeout: 4000
+        });
+      } catch (err) {
+        console.error('[App] Auto-print from webhook failed:', err);
+      }
+    }
+
+    markExistingInboxAsSeen();
+    const interval = setInterval(checkForNewWebhook, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [template, connectionSettings]);
 
   if (error) {
     return (
