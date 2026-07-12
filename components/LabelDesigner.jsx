@@ -634,7 +634,31 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4 bg-muted/40 p-4 rounded-lg border border-border">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-muted/40 p-4 rounded-lg border border-border">
+                      <div className="space-y-1.5">
+                        <label htmlFor={`field-x-${f.id}`} className="text-[11px] font-medium text-muted-foreground">X (mm)</label>
+                        <input
+                          id={`field-x-${f.id}`}
+                          type="number"
+                          min="0"
+                          value={f.x}
+                          onChange={(e) => updateField(f.id, { x: Math.max(0, Number(e.target.value)) })}
+                          className="h-8 w-full rounded border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label htmlFor={`field-y-${f.id}`} className="text-[11px] font-medium text-muted-foreground">Y (mm)</label>
+                        <input
+                          id={`field-y-${f.id}`}
+                          type="number"
+                          min="0"
+                          value={f.y}
+                          onChange={(e) => updateField(f.id, { y: Math.max(0, Number(e.target.value)) })}
+                          className="h-8 w-full rounded border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
+                        />
+                      </div>
+
                       <div className="space-y-1.5">
                         <label htmlFor={`field-font-size-${f.id}`} className="text-[11px] font-medium text-muted-foreground">Font Size (mm)</label>
                         <input
