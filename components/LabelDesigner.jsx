@@ -207,10 +207,33 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
     }
   }
 
+  // Keeps a field's geometry always fitting inside the label — whether it changed via
+  // typed input, dragging, or the align buttons. Without this, e.g. typing a width bigger
+  // than the label itself produces a field with nowhere valid to go, which cascades into
+  // clipped text, other fields getting covered/hidden, etc.
+  function clampFieldGeometry(field, template) {
+    const next = { ...field };
+    next.width = Math.max(1, Math.min(next.width, template.widthMm));
+    next.height = Math.max(1, Math.min(next.height, template.heightMm));
+
+    const { footprintWidth, footprintHeight } = getFieldFootprint(next);
+    const maxX = Math.max(0, template.widthMm - footprintWidth);
+    const maxY = Math.max(0, template.heightMm - footprintHeight);
+    next.x = Math.max(0, Math.min(maxX, next.x));
+    next.y = Math.max(0, Math.min(maxY, next.y));
+
+    return next;
+  }
+
   function updateField(fieldId, patch) {
     setTemplate((t) => ({
       ...t,
-      fields: t.fields.map((f) => (f.id === fieldId ? { ...f, ...patch } : f))
+      fields: t.fields.map((f) => {
+        if (f.id !== fieldId) return f;
+        const merged = { ...f, ...patch };
+        const geometryChanged = ['x', 'y', 'width', 'height', 'rotation'].some((k) => k in patch);
+        return geometryChanged ? clampFieldGeometry(merged, t) : merged;
+      })
     }));
   }
 
@@ -740,8 +763,9 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                           id={`field-x-${f.id}`}
                           type="number"
                           min="0"
+                          max={template.widthMm}
                           value={f.x}
-                          onChange={(e) => updateField(f.id, { x: Math.max(0, Number(e.target.value)) })}
+                          onChange={(e) => updateField(f.id, { x: Number(e.target.value) })}
                           className="h-8 w-full rounded border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
                         />
                       </div>
@@ -752,8 +776,9 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                           id={`field-y-${f.id}`}
                           type="number"
                           min="0"
+                          max={template.heightMm}
                           value={f.y}
-                          onChange={(e) => updateField(f.id, { y: Math.max(0, Number(e.target.value)) })}
+                          onChange={(e) => updateField(f.id, { y: Number(e.target.value) })}
                           className="h-8 w-full rounded border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
                         />
                       </div>
@@ -778,6 +803,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                           id={`field-width-${f.id}`}
                           type="number"
                           min="5"
+                          max={template.widthMm}
                           value={f.width}
                           onChange={(e) => updateField(f.id, { width: Number(e.target.value) })}
                           className="h-8 w-full rounded border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
@@ -790,6 +816,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                           id={`field-height-${f.id}`}
                           type="number"
                           min="3"
+                          max={template.heightMm}
                           value={f.height}
                           onChange={(e) => updateField(f.id, { height: Number(e.target.value) })}
                           className="h-8 w-full rounded border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
