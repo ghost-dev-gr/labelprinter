@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { listPrinters, printLabel } from '@generated/utils/qzPrint';
 import { DEFAULT_CONNECTION_SETTINGS, saveConnectionSettings } from '@generated/utils/connectionSettings';
-import { flattenObject } from '@generated/utils/flatten';
+import { flattenObject, webhookFlatKey } from '@generated/utils/flatten';
 import { RefreshCw, Loader2, CheckCircle2, XCircle, Info, Settings, HelpCircle, FileText } from 'lucide-react';
 
 export default function ConnectionSettings({ boardId, connectionSettings, setConnectionSettings, template, columns }) {
@@ -93,7 +93,7 @@ export default function ConnectionSettings({ boardId, connectionSettings, setCon
       const flat = flattenObject(inbox.payload);
       const testValues = {};
       template.fields.forEach((f) => {
-        testValues[f.columnId] = flat[f.columnId] ?? '';
+        testValues[f.columnId] = flat[webhookFlatKey(f.columnId)] ?? '';
       });
 
       const testColumns = columns && columns.length > 0 ? columns : [];

@@ -9,7 +9,7 @@ import monday from 'monday-sdk-js';
 import { loadTemplate } from '@generated/utils/mondayData';
 import { loadConnectionSettings } from '@generated/utils/connectionSettings';
 import { printLabel } from '@generated/utils/qzPrint';
-import { flattenObject } from '@generated/utils/flatten';
+import { flattenObject, webhookFlatKey } from '@generated/utils/flatten';
 import { PrintTestBoard } from '@api/BoardSDK';
 import LabelDesigner from '@generated/components/LabelDesigner';
 import ConnectionSettings from '@generated/components/ConnectionSettings';
@@ -276,7 +276,7 @@ export default function App() {
         const flat = flattenObject(json.payload);
         const values = {};
         template.fields.forEach((f) => {
-          values[f.columnId] = flat[f.columnId] ?? '';
+          values[f.columnId] = flat[webhookFlatKey(f.columnId)] ?? '';
         });
 
         console.log('[App] Auto-printing from new webhook payload:', values);
