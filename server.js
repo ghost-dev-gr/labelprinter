@@ -1,9 +1,10 @@
 // server.js
 // Production server: serves the built React app (dist/) plus the settings API and
 // monday.com webhook receivers. This is what Coolify runs — the app's public URL
-// (whatever domain Coolify assigns) is the base for the webhook endpoints below:
-//   https://<your-coolify-domain>/webhook/test
+// (whatever domain Coolify assigns) is the base for any webhook path you use, e.g.:
 //   https://<your-coolify-domain>/webhook/test2
+// Which path is treated as the active data source is configurable from the Label
+// Designer's "From Last Webhook" card (defaults to "test2").
 
 import http from 'node:http'
 import path from 'node:path'
@@ -16,7 +17,7 @@ const PORT = process.env.PORT || 5175
 
 const dbDir = path.resolve(__dirname, 'db')
 const distDir = path.resolve(__dirname, 'dist')
-const { storageHandler, webhookTest, webhookTest2, webhookInboxHandler } = createHandlers(dbDir)
+const { storageHandler, webhookHandler, webhookInboxHandler } = createHandlers(dbDir)
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -63,15 +64,12 @@ const server = http.createServer((req, res) => {
 
   if (urlPath === '/api/storage') return storageHandler(req, res)
   if (urlPath === '/api/webhook-inbox') return webhookInboxHandler(req, res)
-  if (urlPath === '/webhook/test') return webhookTest(req, res)
-  if (urlPath === '/webhook/test2') return webhookTest2(req, res)
+  if (urlPath.startsWith('/webhook/')) return webhookHandler(req, res)
 
   return serveStatic(req, res)
 })
 
 server.listen(PORT, () => {
   console.log(`monday-printer server listening on port ${PORT}`)
-  console.log(`Webhook URLs (append your deployed domain):`)
-  console.log(`  /webhook/test`)
-  console.log(`  /webhook/test2`)
+  console.log(`Webhooks: any path under /webhook/<name> works; the active data source name is configurable in the Label Designer.`)
 })

@@ -6,6 +6,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+const DEFAULT_ACTIVE_WEBHOOK_NAME = 'test2'
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     let data = ''
@@ -38,6 +40,10 @@ export function createHandlers(dbDir) {
     fs.writeFileSync(settingsFile, JSON.stringify(store, null, 2))
   }
 
+  function getActiveWebhookName() {
+    return readStore().active_webhook_name || DEFAULT_ACTIVE_WEBHOOK_NAME
+  }
+
   async function storageHandler(req, res) {
     const url = new URL(req.url, 'http://localhost')
 
@@ -65,43 +71,45 @@ export function createHandlers(dbDir) {
     res.end()
   }
 
-  function makeWebhookHandler(name, { onPayload } = {}) {
-    return async (req, res) => {
-      const raw = await readRequestBody(req)
-      let parsed = raw
-      try {
-        parsed = raw ? JSON.parse(raw) : {}
-      } catch {
-        // not JSON, leave as raw string
-      }
+  // Handles ANY /webhook/<name> path — no auth. Every path echoes back what it received
+  // (and answers monday.com's { challenge } verification handshake), but only the path
+  // matching the configured "active" name (see active_webhook_name in settings, editable
+  // from the Label Designer's "From Last Webhook" card) gets saved as the data source for
+  // the Label Designer field picker and App.jsx's auto-print polling.
+  async function webhookHandler(req, res) {
+    const url = new URL(req.url, 'http://localhost')
+    const name = url.pathname.replace(/^\/webhook\//, '').replace(/\/$/, '') || 'test'
 
-      // monday.com verifies a new webhook URL by POSTing { challenge } once and expects
-      // that exact value echoed straight back before it will start sending real events.
-      if (parsed && typeof parsed === 'object' && parsed.challenge) {
-        console.log(`[webhook:${name}] verification challenge received:`, parsed.challenge)
-        respondJson(res, 200, { challenge: parsed.challenge })
-        return
-      }
-
-      console.log(`[webhook:${name}] received payload:`, JSON.stringify(parsed))
-      if (onPayload) onPayload(parsed)
-
-      respondJson(res, 200, { received: true, webhook: name, body: parsed })
+    const raw = await readRequestBody(req)
+    let parsed = raw
+    try {
+      parsed = raw ? JSON.parse(raw) : {}
+    } catch {
+      // not JSON, leave as raw string
     }
-  }
 
-  const webhookTest = makeWebhookHandler('test')
+    // monday.com verifies a new webhook URL by POSTing { challenge } once and expects
+    // that exact value echoed straight back before it will start sending real events.
+    if (parsed && typeof parsed === 'object' && parsed.challenge) {
+      console.log(`[webhook:${name}] verification challenge received:`, parsed.challenge)
+      respondJson(res, 200, { challenge: parsed.challenge })
+      return
+    }
 
-  const webhookTest2 = makeWebhookHandler('test2', {
-    onPayload(payload) {
+    console.log(`[webhook:${name}] received payload:`, JSON.stringify(parsed))
+
+    const isActiveSource = name === getActiveWebhookName()
+    if (isActiveSource) {
       fs.mkdirSync(dbDir, { recursive: true })
       fs.writeFileSync(
         inboxFile,
-        JSON.stringify({ receivedAt: new Date().toISOString(), payload }, null, 2)
+        JSON.stringify({ receivedAt: new Date().toISOString(), payload: parsed }, null, 2)
       )
-      console.log(`[webhook:test2] saved to ${inboxFile}`)
-    },
-  })
+      console.log(`[webhook:${name}] is the active data source — saved to ${inboxFile}`)
+    }
+
+    respondJson(res, 200, { received: true, webhook: name, isActiveSource, body: parsed })
+  }
 
   // Lets the frontend read back the most recent webhook payload (for the Label Designer's
   // "import fields from last webhook" picker and App.jsx's auto-print polling).
@@ -114,5 +122,5 @@ export function createHandlers(dbDir) {
     }
   }
 
-  return { storageHandler, webhookTest, webhookTest2, webhookInboxHandler }
+  return { storageHandler, webhookHandler, webhookInboxHandler }
 }

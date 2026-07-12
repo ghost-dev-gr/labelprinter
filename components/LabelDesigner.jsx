@@ -17,6 +17,39 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
   const [webhookFields, setWebhookFields] = useState([]);
   const [webhookLoading, setWebhookLoading] = useState(false);
   const [webhookError, setWebhookError] = useState('');
+  const [webhookName, setWebhookName] = useState('test2');
+  const [webhookNameSaving, setWebhookNameSaving] = useState(false);
+
+  // Load the configured "active" webhook name (which /webhook/<name> path feeds this picker)
+  useEffect(() => {
+    async function loadWebhookName() {
+      try {
+        const res = await fetch('/api/storage?key=active_webhook_name');
+        const json = await res.json();
+        if (json.value) setWebhookName(json.value);
+      } catch (err) {
+        console.error('Failed to load active webhook name:', err);
+      }
+    }
+    loadWebhookName();
+  }, []);
+
+  async function saveWebhookName() {
+    const name = webhookName.trim() || 'test2';
+    setWebhookName(name);
+    setWebhookNameSaving(true);
+    try {
+      await fetch('/api/storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'active_webhook_name', value: name }),
+      });
+    } catch (err) {
+      console.error('Failed to save active webhook name:', err);
+    } finally {
+      setWebhookNameSaving(false);
+    }
+  }
 
   // Fetch all columns and sample data from the board
   useEffect(() => {
@@ -97,7 +130,7 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
       const json = await res.json();
 
       if (!json.payload) {
-        setWebhookError('No webhook received yet. Trigger one (e.g. /webhook/test2) first.');
+        setWebhookError(`No webhook received yet. POST to /webhook/${webhookName} first.`);
         setWebhookFields([]);
         return;
       }
@@ -325,6 +358,36 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
             >
               {webhookLoading ? 'Loading...' : 'Import'}
             </button>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="webhook-name" className="text-[11px] font-medium text-muted-foreground">
+              Data source webhook path
+            </label>
+            <div className="flex gap-2">
+              <div className="flex items-center h-8 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground">
+                <span className="text-muted-foreground mr-0.5 select-none">/webhook/</span>
+                <input
+                  id="webhook-name"
+                  type="text"
+                  value={webhookName}
+                  onChange={(e) => setWebhookName(e.target.value)}
+                  onBlur={saveWebhookName}
+                  className="flex-1 bg-transparent focus:outline-none"
+                  placeholder="test2"
+                />
+              </div>
+              <button
+                onClick={saveWebhookName}
+                disabled={webhookNameSaving}
+                className="h-8 px-3 rounded-md border border-border bg-background text-xs text-foreground hover:bg-secondary transition-all disabled:opacity-50 flex-shrink-0"
+              >
+                {webhookNameSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Only webhooks POSTed to this exact path feed the picker below and auto-print. Other paths still echo back but are ignored.
+            </p>
           </div>
 
           {webhookError && (
