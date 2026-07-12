@@ -3,7 +3,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { PrintTestBoard } from '@api/BoardSDK';
 import { saveTemplate } from '@generated/utils/mondayData';
-import { printLabel, getFieldFootprint } from '@generated/utils/qzPrint';
+import { printLabel, getFieldFootprint, getPrintedDimensions } from '@generated/utils/qzPrint';
 import { flattenObject, resolveWebhookValue } from '@generated/utils/flatten';
 import {
   LayoutGrid,
@@ -38,6 +38,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
   const [webhookNameSaving, setWebhookNameSaving] = useState(false);
   const [apiToken, setApiToken] = useState('');
   const [apiTokenSaving, setApiTokenSaving] = useState(false);
+  const [previewRotated, setPreviewRotated] = useState(false);
 
   // Load the configured "active" webhook name (which /webhook/<name> path feeds this picker)
   // and the monday.com API token used to resolve group titles from webhook group ids.
@@ -607,8 +608,10 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
             <div>
               <h3 className="text-sm font-semibold text-foreground">Label Canvas</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Drag fields to position them — this canvas always shows the label in normal reading orientation
-                {template.rotation > 0 && (
+                {previewRotated
+                  ? 'Preview only — showing the label exactly as it will print, rotated'
+                  : 'Drag fields to position them — this canvas always shows the label in normal reading orientation'}
+                {template.rotation > 0 && !previewRotated && (
                   <span className="ml-2 px-2 py-0.5 bg-primary/10 text-primary text-[11px] font-medium rounded">
                     Physically rotated {template.rotation}° at print time only (how it feeds into the printer)
                   </span>
@@ -616,6 +619,18 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              {template.rotation > 0 && (
+                <button
+                  onClick={() => setPreviewRotated((v) => !v)}
+                  className={`h-9 px-4 rounded-md border text-xs font-medium transition-all ${
+                    previewRotated
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background text-foreground hover:bg-secondary'
+                  }`}
+                >
+                  {previewRotated ? 'Back to Editing' : 'Preview As Printed'}
+                </button>
+              )}
               <button
                 onClick={handleTestPrint}
                 disabled={testPrinting}
@@ -642,13 +657,25 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
           {/* Label Canvas */}
           <div className="flex justify-center items-center p-8 bg-secondary/30 rounded-lg border border-dashed border-border overflow-auto min-h-[400px]">
             <div
+              style={previewRotated ? { position: 'relative', width: `${getPrintedDimensions(template).pageWidth}mm`, height: `${getPrintedDimensions(template).pageHeight}mm` } : undefined}
+            >
+            <div
               className="relative border border-foreground/30 bg-white shadow-lg rounded-[1px]"
               style={{
                 width: `${template.widthMm}mm`,
                 height: `${template.heightMm}mm`,
                 backgroundImage: 'radial-gradient(circle, #e2e8f0 1px, transparent 1.5px)',
                 backgroundSize: '8px 8px',
-                fontFamily: 'Arial, Helvetica, sans-serif'
+                fontFamily: 'Arial, Helvetica, sans-serif',
+                ...(previewRotated
+                  ? {
+                      position: 'absolute',
+                      left: '50%',
+                      top: '50%',
+                      transform: `translate(-50%, -50%) rotate(${template.rotation}deg)`,
+                      transformOrigin: 'center center'
+                    }
+                  : {})
               }}
             >
               {template.fields.map((f) => {
@@ -660,7 +687,12 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                 // so alignment (top/bottom/left/right) previews exactly as it will print —
                 // a 90/180/270 label rotation flips how "top" or "left" ends up looking.
                 const { footprintWidth, footprintHeight } = getFieldFootprint(f);
-                const effectiveRotation = ((template.rotation || 0) + (f.rotation || 0)) % 360;
+                // In "Preview As Printed" mode the outer canvas wrapper already applies the
+                // label's rotation, so fields only need their own rotation on top of that;
+                // in normal editing mode (canvas unrotated) they need the combined amount.
+                const effectiveRotation = previewRotated
+                  ? ((f.rotation || 0) % 360 + 360) % 360
+                  : ((template.rotation || 0) + (f.rotation || 0)) % 360;
 
                 const contentClassName = `absolute select-none text-black transition-all ${
                   f.wrap ? 'overflow-visible' : 'overflow-hidden'
@@ -700,8 +732,8 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                   return (
                     <div
                       key={f.id}
-                      onPointerDown={(e) => onPointerDown(f.id, e)}
-                      className={`${contentClassName} cursor-move`}
+                      onPointerDown={previewRotated ? undefined : (e) => onPointerDown(f.id, e)}
+                      className={`${contentClassName} ${previewRotated ? '' : 'cursor-move'}`}
                       style={{ left: `${f.x}mm`, top: `${f.y}mm`, ...contentStyle }}
                     >
                       {content}
@@ -718,8 +750,8 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                 return (
                   <div
                     key={f.id}
-                    onPointerDown={(e) => onPointerDown(f.id, e)}
-                    className="absolute cursor-move"
+                    onPointerDown={previewRotated ? undefined : (e) => onPointerDown(f.id, e)}
+                    className={previewRotated ? 'absolute' : 'absolute cursor-move'}
                     style={{ left: `${f.x}mm`, top: `${f.y}mm`, width: `${footprintWidth}mm`, height: `${footprintHeight}mm` }}
                   >
                     <div
@@ -737,6 +769,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                   </div>
                 );
               })}
+            </div>
             </div>
           </div>
 
