@@ -16,7 +16,10 @@ import {
   AlignVerticalJustifyEnd,
 } from 'lucide-react';
 
-const PX_PER_MM = 4.2; // Visual scale for canvas
+// CSS spec-defined physical conversion (1in = 96px, 1in = 25.4mm) — used only to convert
+// on-screen mouse-drag deltas into mm. The canvas itself renders with native CSS "mm" units
+// (not a hand-picked px scale) so it's true-to-life size and matches the print output exactly.
+const MM_TO_PX = 96 / 25.4;
 
 export default function LabelDesigner({ boardId, template, setTemplate }) {
   const dragState = useRef(null);
@@ -236,8 +239,8 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
     const theta = ((template.rotation || 0) * Math.PI) / 180;
     const cos = Math.cos(theta);
     const sin = Math.sin(theta);
-    const dxMm = (dxScreen * cos + dyScreen * sin) / PX_PER_MM;
-    const dyMm = (-dxScreen * sin + dyScreen * cos) / PX_PER_MM;
+    const dxMm = (dxScreen * cos + dyScreen * sin) / MM_TO_PX;
+    const dyMm = (-dxScreen * sin + dyScreen * cos) / MM_TO_PX;
 
     // Clamp against the field's actual size, not a fixed margin — otherwise a tall/wide
     // field can be dragged mostly (or entirely) outside the label with no way back.
@@ -559,8 +562,8 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
             <div
               className="relative border border-foreground/30 bg-white shadow-lg rounded-[1px]"
               style={{
-                width: template.widthMm * PX_PER_MM,
-                height: template.heightMm * PX_PER_MM,
+                width: `${template.widthMm}mm`,
+                height: `${template.heightMm}mm`,
                 backgroundImage: 'radial-gradient(circle, #e2e8f0 1px, transparent 1.5px)',
                 backgroundSize: '8px 8px',
                 transform: `rotate(${template.rotation || 0}deg)`,
@@ -583,12 +586,12 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                         : 'hover:outline-1 hover:outline-dashed hover:outline-primary/50'
                     }`}
                     style={{
-                      left: f.x * PX_PER_MM,
-                      top: f.y * PX_PER_MM,
-                      width: f.width * PX_PER_MM,
-                      height: f.wrap ? 'auto' : f.height * PX_PER_MM,
-                      minHeight: f.height * PX_PER_MM,
-                      fontSize: f.fontSize * PX_PER_MM,
+                      left: `${f.x}mm`,
+                      top: `${f.y}mm`,
+                      width: `${f.width}mm`,
+                      height: f.wrap ? 'auto' : `${f.height}mm`,
+                      minHeight: `${f.height}mm`,
+                      fontSize: `${f.fontSize}mm`,
                       fontWeight: f.bold ? 'bold' : 'normal',
                       textAlign: f.align || 'left',
                       lineHeight: 1.2,
