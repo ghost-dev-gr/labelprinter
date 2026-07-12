@@ -38,7 +38,6 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
   const [webhookNameSaving, setWebhookNameSaving] = useState(false);
   const [apiToken, setApiToken] = useState('');
   const [apiTokenSaving, setApiTokenSaving] = useState(false);
-  const [previewRotated, setPreviewRotated] = useState(false);
   const previewCanvasRef = useRef(null);
 
   // Load the configured "active" webhook name (which /webhook/<name> path feeds this picker)
@@ -169,12 +168,14 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
     fetchColumnsAndSample();
   }, [boardId]);
 
-  // Redraws the "Preview As Printed" canvas using the exact same function printLabel calls,
-  // so this preview can never show something different from what actually prints.
+  // Live preview of the label exactly as it will print (including rotation), using the
+  // same renderLabelToCanvas function printLabel itself calls — so it can never show
+  // something different from what actually prints. Shown automatically whenever the label
+  // has a print rotation set; no button/toggle needed.
   useEffect(() => {
-    if (!previewRotated || !previewCanvasRef.current) return;
+    if (!template.rotation || !previewCanvasRef.current) return;
     renderLabelToCanvas(previewCanvasRef.current, template, sampleData, allColumns, 150);
-  }, [previewRotated, template, sampleData, allColumns]);
+  }, [template, sampleData, allColumns]);
 
   async function importWebhookFields() {
     setWebhookLoading(true);
@@ -616,29 +617,15 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
             <div>
               <h3 className="text-sm font-semibold text-foreground">Label Canvas</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {previewRotated
-                  ? 'Preview only — showing the label exactly as it will print, rotated'
-                  : 'Drag fields to position them — this canvas always shows the label in normal reading orientation'}
-                {template.rotation > 0 && !previewRotated && (
+                Drag fields to position them — shown in normal reading orientation for editing
+                {template.rotation > 0 && (
                   <span className="ml-2 px-2 py-0.5 bg-primary/10 text-primary text-[11px] font-medium rounded">
-                    Physically rotated {template.rotation}° at print time only (how it feeds into the printer)
+                    Live rotated preview shown below — {template.rotation}° at print time
                   </span>
                 )}
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              {template.rotation > 0 && (
-                <button
-                  onClick={() => setPreviewRotated((v) => !v)}
-                  className={`h-9 px-4 rounded-md border text-xs font-medium transition-all ${
-                    previewRotated
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-border bg-background text-foreground hover:bg-secondary'
-                  }`}
-                >
-                  {previewRotated ? 'Back to Editing' : 'Preview As Printed'}
-                </button>
-              )}
               <button
                 onClick={handleTestPrint}
                 disabled={testPrinting}
@@ -663,18 +650,8 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
           )}
 
           {/* Label Canvas */}
-          <div className="flex justify-center items-center p-8 bg-secondary/30 rounded-lg border border-dashed border-border overflow-auto min-h-[400px]">
-            {previewRotated ? (
-              // Actual <canvas> drawn by renderLabelToCanvas — the EXACT SAME function
-              // printLabel calls to generate the real print image. This is not a CSS
-              // approximation of the print output, it IS the print output, just shown on
-              // screen instead of sent to a printer, so it cannot drift out of sync.
-              <canvas
-                ref={previewCanvasRef}
-                className="border border-foreground/30 bg-white shadow-lg rounded-[1px] max-w-full h-auto"
-                style={{ imageRendering: 'crisp-edges' }}
-              />
-            ) : (
+          <div className="flex flex-wrap justify-center gap-6 p-8 bg-secondary/30 rounded-lg border border-dashed border-border overflow-auto min-h-[400px]">
+            <div className="flex flex-col items-center gap-2">
               <div
                 className="relative border border-foreground/30 bg-white shadow-lg rounded-[1px]"
                 style={{
@@ -740,8 +717,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                   // Outer div reserves the field's own-rotation footprint (width/height
                   // swapped only for a 90/270 field rotation) — this is what dragging,
                   // clamping and alignment position against, in the label's local frame
-                  // (the label's own print rotation is not shown here — switch to
-                  // "Preview As Printed" to see the combined result).
+                  // (the label's own print rotation is shown in the live preview alongside).
                   return (
                     <div
                       key={f.id}
@@ -764,6 +740,22 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                     </div>
                   );
                 })}
+              </div>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Editable (normal orientation)</span>
+            </div>
+
+            {template.rotation > 0 && (
+              <div className="flex flex-col items-center gap-2">
+                {/* Actual <canvas> drawn by renderLabelToCanvas — the EXACT SAME function
+                    printLabel calls to generate the real print image. This is not a CSS
+                    approximation, it IS the print output, just shown on screen instead of
+                    sent to a printer, so it cannot drift out of sync with what prints. */}
+                <canvas
+                  ref={previewCanvasRef}
+                  className="border border-foreground/30 bg-white shadow-lg rounded-[1px] max-w-full h-auto"
+                  style={{ imageRendering: 'crisp-edges' }}
+                />
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Live preview (as printed, {template.rotation}°)</span>
               </div>
             )}
           </div>
