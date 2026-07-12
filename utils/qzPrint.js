@@ -193,11 +193,21 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;');
 }
 
+// Physical bounding box of the label as it feeds into the printer once rotated —
+// a 90/270 rotation swaps which dimension is "width" vs "height" on the physical page.
+export function getPrintedDimensions(template) {
+  const rotation = ((template.rotation || 0) % 360 + 360) % 360;
+  if (rotation === 90 || rotation === 270) {
+    return { pageWidth: template.heightMm, pageHeight: template.widthMm, rotation };
+  }
+  return { pageWidth: template.widthMm, pageHeight: template.heightMm, rotation };
+}
+
 export function buildLabelHtml(template, values, columns = []) {
   const fieldsHtml = template.fields.map((f) => {
     const textVal = values[f.columnId];
     let formattedText = escapeHtml(textVal);
-    
+
     if (f.showLabel) {
       const colTitle = f.columnId === 'name' ? 'Item' : (columns.find(c => c.id === f.columnId)?.title || f.columnId);
       formattedText = `<span style="opacity: 0.6; font-size: 80%; margin-right: 4px;">${escapeHtml(colTitle)}:</span>${formattedText}`;
@@ -218,10 +228,25 @@ export function buildLabelHtml(template, values, columns = []) {
     );
   }).join('');
 
-  return (
+  const labelHtml =
     `<div style="position:relative;width:${template.widthMm}mm;` +
     `height:${template.heightMm}mm;background:#ffffff;overflow:hidden;` +
-    `font-family:sans-serif;color:#000000;box-sizing:border-box;margin:0;padding:0;">${fieldsHtml}</div>`
+    `font-family:sans-serif;color:#000000;box-sizing:border-box;margin:0;padding:0;">${fieldsHtml}</div>`;
+
+  const { pageWidth, pageHeight, rotation } = getPrintedDimensions(template);
+  if (rotation === 0) {
+    return labelHtml;
+  }
+
+  // Rotate the actual rendered content ourselves (rather than relying on the printer
+  // driver/QZ Tray's own rotation option, which isn't honored consistently across
+  // drivers) and size the outer page to the rotated bounding box.
+  return (
+    `<div style="position:relative;width:${pageWidth}mm;height:${pageHeight}mm;` +
+    `background:#ffffff;overflow:hidden;margin:0;padding:0;">` +
+    `<div style="position:absolute;left:50%;top:50%;width:${template.widthMm}mm;height:${template.heightMm}mm;` +
+    `transform:translate(-50%,-50%) rotate(${rotation}deg);transform-origin:center center;">` +
+    `${labelHtml}</div></div>`
   );
 }
 
@@ -229,13 +254,14 @@ export async function printLabel(printerName, template, values, columns, { connS
   await ensureConnected(connSettings);
   const qz = getQz();
 
+  const { pageWidth, pageHeight } = getPrintedDimensions(template);
+
   const config = qz.configs.create(printerName, {
-    size: { width: template.widthMm, height: template.heightMm },
+    size: { width: pageWidth, height: pageHeight },
     units: 'mm',
     margins: 0,
     rasterize: true,
     colorType: 'grayscale',
-    rotation: template.rotation || 0,
     copies: copies
   });
 

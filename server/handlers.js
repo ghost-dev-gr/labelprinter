@@ -44,6 +44,49 @@ export function createHandlers(dbDir) {
     return readStore().active_webhook_name || DEFAULT_ACTIVE_WEBHOOK_NAME
   }
 
+  // Webhooks only carry a group's internal id (e.g. "topics"), never its display title.
+  // Look the title up via monday's GraphQL API using the API token saved from the Label
+  // Designer's "From Last Webhook" card.
+  async function fetchGroupTitle(boardId, groupId, token) {
+    try {
+      const res = await fetch('https://api.monday.com/v2', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token,
+        },
+        body: JSON.stringify({
+          query: `query { boards(ids: ${Number(boardId)}) { groups { id title } } }`,
+        }),
+      })
+      const json = await res.json()
+      if (json.errors) {
+        console.error('[monday-api] GraphQL error fetching group title:', json.errors)
+        return null
+      }
+      const groups = json?.data?.boards?.[0]?.groups || []
+      const match = groups.find((g) => g.id === groupId)
+      return match ? match.title : null
+    } catch (err) {
+      console.error('[monday-api] Failed to fetch group title:', err)
+      return null
+    }
+  }
+
+  async function enrichPayload(parsed) {
+    const event = parsed && typeof parsed === 'object' ? parsed.event : null
+    if (!event || !event.boardId || !event.groupId) return parsed
+
+    const token = readStore().monday_api_token
+    if (!token) return parsed
+
+    const groupTitle = await fetchGroupTitle(event.boardId, event.groupId, token)
+    if (!groupTitle) return parsed
+
+    console.log(`[monday-api] resolved groupId "${event.groupId}" -> title "${groupTitle}"`)
+    return { ...parsed, event: { ...event, groupTitle } }
+  }
+
   async function storageHandler(req, res) {
     const url = new URL(req.url, 'http://localhost')
 
@@ -100,10 +143,11 @@ export function createHandlers(dbDir) {
 
     const isActiveSource = name === getActiveWebhookName()
     if (isActiveSource) {
+      const enriched = await enrichPayload(parsed)
       fs.mkdirSync(dbDir, { recursive: true })
       fs.writeFileSync(
         inboxFile,
-        JSON.stringify({ receivedAt: new Date().toISOString(), payload: parsed }, null, 2)
+        JSON.stringify({ receivedAt: new Date().toISOString(), payload: enriched }, null, 2)
       )
       console.log(`[webhook:${name}] is the active data source — saved to ${inboxFile}`)
     }

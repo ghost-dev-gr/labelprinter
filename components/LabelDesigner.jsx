@@ -29,8 +29,11 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
   const [webhookError, setWebhookError] = useState('');
   const [webhookName, setWebhookName] = useState('test2');
   const [webhookNameSaving, setWebhookNameSaving] = useState(false);
+  const [apiToken, setApiToken] = useState('');
+  const [apiTokenSaving, setApiTokenSaving] = useState(false);
 
   // Load the configured "active" webhook name (which /webhook/<name> path feeds this picker)
+  // and the monday.com API token used to resolve group titles from webhook group ids.
   useEffect(() => {
     async function loadWebhookName() {
       try {
@@ -41,7 +44,17 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
         console.error('Failed to load active webhook name:', err);
       }
     }
+    async function loadApiToken() {
+      try {
+        const res = await fetch('/api/storage?key=monday_api_token');
+        const json = await res.json();
+        if (json.value) setApiToken(json.value);
+      } catch (err) {
+        console.error('Failed to load monday API token:', err);
+      }
+    }
     loadWebhookName();
+    loadApiToken();
   }, []);
 
   async function saveWebhookName() {
@@ -58,6 +71,21 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
       console.error('Failed to save active webhook name:', err);
     } finally {
       setWebhookNameSaving(false);
+    }
+  }
+
+  async function saveApiToken() {
+    setApiTokenSaving(true);
+    try {
+      await fetch('/api/storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'monday_api_token', value: apiToken.trim() }),
+      });
+    } catch (err) {
+      console.error('Failed to save monday API token:', err);
+    } finally {
+      setApiTokenSaving(false);
     }
   }
 
@@ -442,6 +470,34 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
             </div>
             <p className="text-[10px] text-muted-foreground">
               Only webhooks POSTed to this exact path feed the picker below and auto-print. Other paths still echo back but are ignored.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="monday-api-token" className="text-[11px] font-medium text-muted-foreground">
+              monday.com API token (resolves group names)
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="monday-api-token"
+                type="password"
+                value={apiToken}
+                onChange={(e) => setApiToken(e.target.value)}
+                onBlur={saveApiToken}
+                className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
+                placeholder="Paste your monday.com API token"
+              />
+              <button
+                onClick={saveApiToken}
+                disabled={apiTokenSaving}
+                className="h-8 px-3 rounded-md border border-border bg-background text-xs text-foreground hover:bg-secondary transition-all disabled:opacity-50 flex-shrink-0"
+              >
+                {apiTokenSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Webhooks only include a group's internal id. With a token saved, incoming webhooks
+              get their real group name resolved automatically as <code className="font-mono">event.groupTitle</code>.
             </p>
           </div>
 
