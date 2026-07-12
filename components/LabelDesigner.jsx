@@ -3,7 +3,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { PrintTestBoard } from '@api/BoardSDK';
 import { saveTemplate } from '@generated/utils/mondayData';
-import { printLabel, getFieldFootprint, getPrintedDimensions } from '@generated/utils/qzPrint';
+import { printLabel, getFieldFootprint, renderLabelToCanvas } from '@generated/utils/qzPrint';
 import { flattenObject, resolveWebhookValue } from '@generated/utils/flatten';
 import {
   LayoutGrid,
@@ -39,6 +39,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
   const [apiToken, setApiToken] = useState('');
   const [apiTokenSaving, setApiTokenSaving] = useState(false);
   const [previewRotated, setPreviewRotated] = useState(false);
+  const previewCanvasRef = useRef(null);
 
   // Load the configured "active" webhook name (which /webhook/<name> path feeds this picker)
   // and the monday.com API token used to resolve group titles from webhook group ids.
@@ -167,6 +168,13 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
 
     fetchColumnsAndSample();
   }, [boardId]);
+
+  // Redraws the "Preview As Printed" canvas using the exact same function printLabel calls,
+  // so this preview can never show something different from what actually prints.
+  useEffect(() => {
+    if (!previewRotated || !previewCanvasRef.current) return;
+    renderLabelToCanvas(previewCanvasRef.current, template, sampleData, allColumns, 150);
+  }, [previewRotated, template, sampleData, allColumns]);
 
   async function importWebhookFields() {
     setWebhookLoading(true);
@@ -656,121 +664,108 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
 
           {/* Label Canvas */}
           <div className="flex justify-center items-center p-8 bg-secondary/30 rounded-lg border border-dashed border-border overflow-auto min-h-[400px]">
-            <div
-              style={previewRotated ? { position: 'relative', width: `${getPrintedDimensions(template).pageWidth}mm`, height: `${getPrintedDimensions(template).pageHeight}mm` } : undefined}
-            >
-            <div
-              className="relative border border-foreground/30 bg-white shadow-lg rounded-[1px]"
-              style={{
-                width: `${template.widthMm}mm`,
-                height: `${template.heightMm}mm`,
-                backgroundImage: 'radial-gradient(circle, #e2e8f0 1px, transparent 1.5px)',
-                backgroundSize: '8px 8px',
-                fontFamily: 'Arial, Helvetica, sans-serif',
-                ...(previewRotated
-                  ? {
-                      position: 'absolute',
-                      left: '50%',
-                      top: '50%',
-                      transform: `translate(-50%, -50%) rotate(${template.rotation}deg)`,
-                      transformOrigin: 'center center'
-                    }
-                  : {})
-              }}
-            >
-              {template.fields.map((f) => {
-                const isSelected = selectedFieldId === f.id;
-                const displayVal = sampleData[f.columnId] || `[${columnTitle(f.columnId)}]`;
-                // Footprint (for layout/position/clamping) is based on the field's own
-                // rotation only — that's the local, pre-print-rotation frame dragging works
-                // in. The visual rotation shown here combines the label's print rotation too,
-                // so alignment (top/bottom/left/right) previews exactly as it will print —
-                // a 90/180/270 label rotation flips how "top" or "left" ends up looking.
-                const { footprintWidth, footprintHeight } = getFieldFootprint(f);
-                // In "Preview As Printed" mode the outer canvas wrapper already applies the
-                // label's rotation, so fields only need their own rotation on top of that;
-                // in normal editing mode (canvas unrotated) they need the combined amount.
-                const effectiveRotation = previewRotated
-                  ? ((f.rotation || 0) % 360 + 360) % 360
-                  : ((template.rotation || 0) + (f.rotation || 0)) % 360;
+            {previewRotated ? (
+              // Actual <canvas> drawn by renderLabelToCanvas — the EXACT SAME function
+              // printLabel calls to generate the real print image. This is not a CSS
+              // approximation of the print output, it IS the print output, just shown on
+              // screen instead of sent to a printer, so it cannot drift out of sync.
+              <canvas
+                ref={previewCanvasRef}
+                className="border border-foreground/30 bg-white shadow-lg rounded-[1px] max-w-full h-auto"
+                style={{ imageRendering: 'crisp-edges' }}
+              />
+            ) : (
+              <div
+                className="relative border border-foreground/30 bg-white shadow-lg rounded-[1px]"
+                style={{
+                  width: `${template.widthMm}mm`,
+                  height: `${template.heightMm}mm`,
+                  backgroundImage: 'radial-gradient(circle, #e2e8f0 1px, transparent 1.5px)',
+                  backgroundSize: '8px 8px',
+                  fontFamily: 'Arial, Helvetica, sans-serif'
+                }}
+              >
+                {template.fields.map((f) => {
+                  const isSelected = selectedFieldId === f.id;
+                  const displayVal = sampleData[f.columnId] || `[${columnTitle(f.columnId)}]`;
+                  const { footprintWidth, footprintHeight, rotation } = getFieldFootprint(f);
 
-                const contentClassName = `absolute select-none text-black transition-all ${
-                  f.wrap ? 'overflow-visible' : 'overflow-hidden'
-                } ${
-                  isSelected
-                    ? 'outline-2 outline-dashed outline-primary outline-offset-1 bg-primary/5'
-                    : 'hover:outline-1 hover:outline-dashed hover:outline-primary/50'
-                }`;
+                  const contentClassName = `absolute select-none text-black transition-all ${
+                    f.wrap ? 'overflow-visible' : 'overflow-hidden'
+                  } ${
+                    isSelected
+                      ? 'outline-2 outline-dashed outline-primary outline-offset-1 bg-primary/5'
+                      : 'hover:outline-1 hover:outline-dashed hover:outline-primary/50'
+                  }`;
 
-                const verticalAlignMap = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
+                  const verticalAlignMap = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
 
-                const contentStyle = {
-                  width: `${f.width}mm`,
-                  height: f.wrap ? 'auto' : `${f.height}mm`,
-                  minHeight: `${f.height}mm`,
-                  fontSize: `${f.fontSize}mm`,
-                  fontWeight: f.bold ? 'bold' : 'normal',
-                  textAlign: f.align || 'left',
-                  lineHeight: 1.2,
-                  display: 'flex',
-                  alignItems: verticalAlignMap[f.verticalAlign] || 'center',
-                  justifyContent: f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'
-                };
+                  const contentStyle = {
+                    width: `${f.width}mm`,
+                    height: f.wrap ? 'auto' : `${f.height}mm`,
+                    minHeight: `${f.height}mm`,
+                    fontSize: `${f.fontSize}mm`,
+                    fontWeight: f.bold ? 'bold' : 'normal',
+                    textAlign: f.align || 'left',
+                    lineHeight: 1.2,
+                    display: 'flex',
+                    alignItems: verticalAlignMap[f.verticalAlign] || 'center',
+                    justifyContent: f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'
+                  };
 
-                const content = (
-                  <>
-                    {f.showLabel && (
-                      <span className="opacity-40 text-[75%] font-normal mr-1 select-none">
-                        {columnTitle(f.columnId)}:
-                      </span>
-                    )}
-                    <span className={f.wrap ? 'whitespace-normal break-words' : 'truncate'}>{displayVal}</span>
-                  </>
-                );
+                  const content = (
+                    <>
+                      {f.showLabel && (
+                        <span className="opacity-40 text-[75%] font-normal mr-1 select-none">
+                          {columnTitle(f.columnId)}:
+                        </span>
+                      )}
+                      <span className={f.wrap ? 'whitespace-normal break-words' : 'truncate'}>{displayVal}</span>
+                    </>
+                  );
 
-                if (!effectiveRotation) {
+                  if (!rotation) {
+                    return (
+                      <div
+                        key={f.id}
+                        onPointerDown={(e) => onPointerDown(f.id, e)}
+                        className={`${contentClassName} cursor-move`}
+                        style={{ left: `${f.x}mm`, top: `${f.y}mm`, ...contentStyle }}
+                      >
+                        {content}
+                      </div>
+                    );
+                  }
+
+                  // Outer div reserves the field's own-rotation footprint (width/height
+                  // swapped only for a 90/270 field rotation) — this is what dragging,
+                  // clamping and alignment position against, in the label's local frame
+                  // (the label's own print rotation is not shown here — switch to
+                  // "Preview As Printed" to see the combined result).
                   return (
                     <div
                       key={f.id}
-                      onPointerDown={previewRotated ? undefined : (e) => onPointerDown(f.id, e)}
-                      className={`${contentClassName} ${previewRotated ? '' : 'cursor-move'}`}
-                      style={{ left: `${f.x}mm`, top: `${f.y}mm`, ...contentStyle }}
+                      onPointerDown={(e) => onPointerDown(f.id, e)}
+                      className="absolute cursor-move"
+                      style={{ left: `${f.x}mm`, top: `${f.y}mm`, width: `${footprintWidth}mm`, height: `${footprintHeight}mm` }}
                     >
-                      {content}
+                      <div
+                        className={contentClassName}
+                        style={{
+                          left: '50%',
+                          top: '50%',
+                          ...contentStyle,
+                          transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+                          transformOrigin: 'center center'
+                        }}
+                      >
+                        {content}
+                      </div>
                     </div>
                   );
-                }
-
-                // Outer div reserves the field's OWN-rotation footprint (width/height
-                // swapped only for a 90/270 field rotation) — this is what dragging,
-                // clamping and alignment position against, in the label's local frame.
-                // Inner div keeps the field's declared (unrotated) size and is centered +
-                // rotated by the COMBINED (label + field) rotation, previewing exactly what
-                // will print.
-                return (
-                  <div
-                    key={f.id}
-                    onPointerDown={previewRotated ? undefined : (e) => onPointerDown(f.id, e)}
-                    className={previewRotated ? 'absolute' : 'absolute cursor-move'}
-                    style={{ left: `${f.x}mm`, top: `${f.y}mm`, width: `${footprintWidth}mm`, height: `${footprintHeight}mm` }}
-                  >
-                    <div
-                      className={contentClassName}
-                      style={{
-                        left: '50%',
-                        top: '50%',
-                        ...contentStyle,
-                        transform: `translate(-50%, -50%) rotate(${effectiveRotation}deg)`,
-                        transformOrigin: 'center center'
-                      }}
-                    >
-                      {content}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            </div>
+                })}
+              </div>
+            )}
           </div>
 
           {/* Field Properties */}

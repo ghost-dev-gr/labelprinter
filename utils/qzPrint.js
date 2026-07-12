@@ -186,13 +186,6 @@ export const DEFAULT_CONNECTION_SETTINGS = {
   copies: 1
 };
 
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
 // Physical bounding box of the label as it feeds into the printer once rotated —
 // a 90/270 rotation swaps which dimension is "width" vs "height" on the physical page.
 export function getPrintedDimensions(template) {
@@ -223,71 +216,124 @@ function rotateOffset(dx, dy, angleDeg) {
   return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
 }
 
-export function buildLabelHtml(template, values, columns = []) {
+// Single source of truth for where a field ends up on the printed page and at what
+// rotation, composing the label's print rotation with the field's own rotation. Both
+// renderLabelToCanvas (below) and the Label Designer's "Preview As Printed" mode call this
+// exact function — they render from the same numbers, so the preview cannot drift out of
+// sync with what actually prints.
+export function computeFieldPlacement(template, field) {
   const { pageWidth, pageHeight, rotation: labelRotation } = getPrintedDimensions(template);
+  const { footprintWidth, footprintHeight } = getFieldFootprint(field);
 
-  // Each field's final page position + rotation is computed directly here (composing the
-  // label's rotation with the field's own rotation ourselves), instead of nesting a rotated
-  // field inside a rotated label wrapper in the DOM. QZ Tray's HTML rasterizer is an
-  // embedded renderer, not a full evergreen browser, and does not reliably compose nested
-  // CSS transforms — every field below is emitted as one flat div with a single absolute
-  // position and a single (already-combined) rotation angle, which any renderer handles.
-  const fieldsHtml = template.fields.map((f) => {
-    const textVal = values[f.columnId];
-    let formattedText = escapeHtml(textVal);
+  const localCenterX = field.x + footprintWidth / 2;
+  const localCenterY = field.y + footprintHeight / 2;
+
+  let pageCenterX = localCenterX;
+  let pageCenterY = localCenterY;
+  if (labelRotation) {
+    const offset = rotateOffset(
+      localCenterX - template.widthMm / 2,
+      localCenterY - template.heightMm / 2,
+      labelRotation
+    );
+    pageCenterX = pageWidth / 2 + offset.x;
+    pageCenterY = pageHeight / 2 + offset.y;
+  }
+
+  const rotation = ((labelRotation + (field.rotation || 0)) % 360 + 360) % 360;
+
+  return {
+    left: pageCenterX - field.width / 2,
+    top: pageCenterY - field.height / 2,
+    width: field.width,
+    height: field.height,
+    rotation,
+    pageWidth,
+    pageHeight
+  };
+}
+
+// Breaks text into lines that fit within maxWidthPx, using the canvas context's current
+// font for measurement. Falls back to one line if a single word is already too wide.
+function wrapTextToLines(ctx, text, maxWidthPx) {
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (current && ctx.measureText(candidate).width > maxWidthPx) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [''];
+}
+
+// Draws the whole label directly onto a canvas using the Canvas 2D API — every position,
+// rotation and line-wrap decision is computed by us in plain JS (via computeFieldPlacement),
+// instead of handing HTML/CSS to a renderer to interpret. This sidesteps QZ Tray's embedded
+// HTML rasterizer entirely — printing becomes "print this exact bitmap," which every
+// printer driver handles the same, deterministic way.
+export function renderLabelToCanvas(canvas, template, values, columns = [], dpi = 300) {
+  const pxPerMm = dpi / 25.4;
+  const { pageWidth, pageHeight } = getPrintedDimensions(template);
+
+  canvas.width = Math.max(1, Math.round(pageWidth * pxPerMm));
+  canvas.height = Math.max(1, Math.round(pageHeight * pxPerMm));
+
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#000000';
+  ctx.textBaseline = 'alphabetic';
+
+  template.fields.forEach((f) => {
+    const textVal = values[f.columnId] ?? '';
+    let text = String(textVal);
 
     if (f.showLabel) {
-      const colTitle = f.columnId === 'name' ? 'Item' : (columns.find(c => c.id === f.columnId)?.title || f.columnId);
-      formattedText = `<span style="opacity: 0.6; font-size: 80%; margin-right: 4px;">${escapeHtml(colTitle)}:</span>${formattedText}`;
+      const colTitle = f.columnId === 'name' ? 'Item' : (columns.find((c) => c.id === f.columnId)?.title || f.columnId);
+      text = `${colTitle}: ${text}`;
     }
 
-    const sizeStyle = f.wrap
-      ? `width:${f.width}mm;min-height:${f.height}mm;height:auto;overflow:visible;white-space:normal;word-break:break-word;`
-      : `width:${f.width}mm;height:${f.height}mm;overflow:hidden;white-space:nowrap;`;
+    const placement = computeFieldPlacement(template, f);
+    const boxWidthPx = f.width * pxPerMm;
+    const boxHeightPx = f.height * pxPerMm;
+    const fontSizePx = f.fontSize * pxPerMm;
 
-    const verticalAlignMap = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
+    ctx.save();
+    ctx.translate((placement.left + f.width / 2) * pxPerMm, (placement.top + f.height / 2) * pxPerMm);
+    ctx.rotate((placement.rotation * Math.PI) / 180);
 
-    const textStyle =
-      `font-size:${f.fontSize}mm;font-family:Arial,Helvetica,sans-serif;line-height:1.2;` +
-      `text-align:${f.align || 'left'};font-weight:${f.bold ? 'bold' : 'normal'};` +
-      `display:flex;align-items:${verticalAlignMap[f.verticalAlign] || 'center'};` +
-      `justify-content:${f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'};` +
-      `color:#000;`;
-
-    const { footprintWidth, footprintHeight } = getFieldFootprint(f);
-    const localCenterX = f.x + footprintWidth / 2;
-    const localCenterY = f.y + footprintHeight / 2;
-
-    let pageCenterX = localCenterX;
-    let pageCenterY = localCenterY;
-    if (labelRotation) {
-      const offset = rotateOffset(
-        localCenterX - template.widthMm / 2,
-        localCenterY - template.heightMm / 2,
-        labelRotation
-      );
-      pageCenterX = pageWidth / 2 + offset.x;
-      pageCenterY = pageHeight / 2 + offset.y;
+    if (!f.wrap) {
+      ctx.beginPath();
+      ctx.rect(-boxWidthPx / 2, -boxHeightPx / 2, boxWidthPx, boxHeightPx);
+      ctx.clip();
     }
 
-    const effectiveRotation = ((labelRotation + (f.rotation || 0)) % 360 + 360) % 360;
-    const boxLeft = pageCenterX - f.width / 2;
-    const boxTop = pageCenterY - f.height / 2;
-    const rotationStyle = effectiveRotation
-      ? `transform:rotate(${effectiveRotation}deg);transform-origin:center center;`
-      : '';
+    ctx.font = `${f.bold ? 'bold ' : ''}${fontSizePx}px Arial, Helvetica, sans-serif`;
+    ctx.textAlign = f.align === 'center' ? 'center' : f.align === 'right' ? 'right' : 'left';
+    const textX = f.align === 'center' ? 0 : f.align === 'right' ? boxWidthPx / 2 : -boxWidthPx / 2;
 
-    return (
-      `<div style="position:absolute;left:${boxLeft}mm;top:${boxTop}mm;` +
-      sizeStyle + textStyle + rotationStyle +
-      `">${formattedText}</div>`
-    );
-  }).join('');
+    const lines = f.wrap ? wrapTextToLines(ctx, text, boxWidthPx) : [text];
+    const lineHeightPx = fontSizePx * 1.2;
+    const totalHeightPx = lines.length * lineHeightPx;
 
-  return (
-    `<div style="position:relative;width:${pageWidth}mm;height:${pageHeight}mm;` +
-    `background:#ffffff;overflow:hidden;margin:0;padding:0;">${fieldsHtml}</div>`
-  );
+    let startY;
+    if (f.verticalAlign === 'top') startY = -boxHeightPx / 2 + fontSizePx;
+    else if (f.verticalAlign === 'bottom') startY = boxHeightPx / 2 - totalHeightPx + fontSizePx;
+    else startY = -totalHeightPx / 2 + fontSizePx;
+
+    lines.forEach((line, i) => {
+      ctx.fillText(line, textX, startY + i * lineHeightPx);
+    });
+
+    ctx.restore();
+  });
 }
 
 export async function printLabel(printerName, template, values, columns, { connSettings, copies = 1 } = {}) {
@@ -296,17 +342,19 @@ export async function printLabel(printerName, template, values, columns, { connS
 
   const { pageWidth, pageHeight } = getPrintedDimensions(template);
 
+  const canvas = document.createElement('canvas');
+  renderLabelToCanvas(canvas, template, values, columns, 300);
+  const base64 = canvas.toDataURL('image/png').split(',')[1];
+
   const config = qz.configs.create(printerName, {
     size: { width: pageWidth, height: pageHeight },
     units: 'mm',
     margins: 0,
-    rasterize: true,
     colorType: 'grayscale',
     copies: copies
   });
 
-  const html = buildLabelHtml(template, values, columns);
-  const data = [{ type: 'pixel', format: 'html', flavor: 'plain', data: html }];
+  const data = [{ type: 'pixel', format: 'image', flavor: 'base64', data: base64 }];
 
   await qz.print(config, data);
 }
