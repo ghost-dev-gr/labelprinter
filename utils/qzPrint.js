@@ -217,6 +217,10 @@ export function buildLabelHtml(template, values, columns = []) {
       ? `width:${f.width}mm;min-height:${f.height}mm;height:auto;overflow:visible;white-space:normal;word-break:break-word;`
       : `width:${f.width}mm;height:${f.height}mm;overflow:hidden;white-space:nowrap;`;
 
+    const rotationStyle = f.rotation
+      ? `transform:rotate(${f.rotation}deg);transform-origin:center center;`
+      : '';
+
     return (
       `<div style="position:absolute;left:${f.x}mm;top:${f.y}mm;` +
       sizeStyle +
@@ -224,6 +228,7 @@ export function buildLabelHtml(template, values, columns = []) {
       `text-align:${f.align || 'left'};font-weight:${f.bold ? 'bold' : 'normal'};` +
       `display:flex;align-items:${f.wrap ? 'flex-start' : 'center'};` +
       `justify-content:${f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'};` +
+      rotationStyle +
       `color:#000;">${formattedText}</div>`
     );
   }).join('');

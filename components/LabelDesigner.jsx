@@ -3,7 +3,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { PrintTestBoard } from '@api/BoardSDK';
 import { saveTemplate } from '@generated/utils/mondayData';
-import { flattenObject } from '@generated/utils/flatten';
+import { flattenObject, resolveWebhookValue } from '@generated/utils/flatten';
 import {
   LayoutGrid,
   Sparkles,
@@ -177,7 +177,7 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
       const fields = Object.entries(flat).map(([webhookPath, value]) => ({
         id: `webhook:${webhookPath}`,
         title: webhookPath,
-        value,
+        value: resolveWebhookValue(flat, webhookPath) ?? value,
       }));
 
       setWebhookFields(fields);
@@ -594,7 +594,9 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                       lineHeight: 1.2,
                       display: 'flex',
                       alignItems: f.wrap ? 'flex-start' : 'center',
-                      justifyContent: f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'
+                      justifyContent: f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start',
+                      transform: f.rotation ? `rotate(${f.rotation}deg)` : undefined,
+                      transformOrigin: 'center center'
                     }}
                   >
                     {f.showLabel && (
@@ -629,7 +631,7 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-muted/40 p-4 rounded-lg border border-border">
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4 bg-muted/40 p-4 rounded-lg border border-border">
                       <div className="space-y-1.5">
                         <label htmlFor={`field-font-size-${f.id}`} className="text-[11px] font-medium text-muted-foreground">Font Size (mm)</label>
                         <input
@@ -679,6 +681,21 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                           <option value="left">Left</option>
                           <option value="center">Center</option>
                           <option value="right">Right</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label htmlFor={`field-rotation-${f.id}`} className="text-[11px] font-medium text-muted-foreground">Text Rotation</label>
+                        <select
+                          id={`field-rotation-${f.id}`}
+                          value={f.rotation || 0}
+                          onChange={(e) => updateField(f.id, { rotation: Number(e.target.value) })}
+                          className="h-8 w-full rounded border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
+                        >
+                          <option value="0">0°</option>
+                          <option value="90">90°</option>
+                          <option value="180">180°</option>
+                          <option value="270">270°</option>
                         </select>
                       </div>
 

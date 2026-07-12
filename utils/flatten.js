@@ -14,6 +14,18 @@ export function webhookFlatKey(columnId) {
     : columnId;
 }
 
+// A field mapped to a raw "...groupId" path should print the resolved group name once the
+// server has enriched the payload with the matching "...groupTitle" (see server/handlers.js
+// fetchGroupTitle) — without requiring re-mapping the field to the new key by hand.
+export function resolveWebhookValue(flat, columnId) {
+  const key = webhookFlatKey(columnId);
+  if (/(^|\.)groupId$/.test(key)) {
+    const titleKey = key.replace(/groupId$/, 'groupTitle');
+    if (flat[titleKey] !== undefined && flat[titleKey] !== null) return flat[titleKey];
+  }
+  return flat[key];
+}
+
 export function flattenObject(obj, prefix = '') {
   const result = {};
   if (obj === null || obj === undefined) return result;
