@@ -233,25 +233,28 @@ export function buildLabelHtml(template, values, columns = []) {
     );
   }).join('');
 
-  const labelHtml =
-    `<div style="position:relative;width:${template.widthMm}mm;` +
-    `height:${template.heightMm}mm;background:#ffffff;overflow:hidden;` +
-    `font-family:sans-serif;color:#000000;box-sizing:border-box;margin:0;padding:0;">${fieldsHtml}</div>`;
-
   const { pageWidth, pageHeight, rotation } = getPrintedDimensions(template);
+
   if (rotation === 0) {
-    return labelHtml;
+    return (
+      `<div style="position:relative;width:${template.widthMm}mm;` +
+      `height:${template.heightMm}mm;background:#ffffff;overflow:hidden;` +
+      `font-family:sans-serif;color:#000000;box-sizing:border-box;margin:0;padding:0;">${fieldsHtml}</div>`
+    );
   }
 
   // Rotate the actual rendered content ourselves (rather than relying on the printer
   // driver/QZ Tray's own rotation option, which isn't honored consistently across
-  // drivers) and size the outer page to the rotated bounding box.
+  // drivers) and size the outer page to the rotated bounding box. Single wrapper —
+  // no redundant nested box — so the rotated content is centered on the printed page
+  // with no extra offset.
   return (
     `<div style="position:relative;width:${pageWidth}mm;height:${pageHeight}mm;` +
     `background:#ffffff;overflow:hidden;margin:0;padding:0;">` +
     `<div style="position:absolute;left:50%;top:50%;width:${template.widthMm}mm;height:${template.heightMm}mm;` +
+    `font-family:sans-serif;color:#000000;box-sizing:border-box;` +
     `transform:translate(-50%,-50%) rotate(${rotation}deg);transform-origin:center center;">` +
-    `${labelHtml}</div></div>`
+    `${fieldsHtml}</div></div>`
   );
 }
 

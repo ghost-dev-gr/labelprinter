@@ -697,6 +697,13 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                           <option value="180">180°</option>
                           <option value="270">270°</option>
                         </select>
+                        {template.rotation > 0 && f.rotation > 0 && (
+                          <p className="text-[10px] text-destructive">
+                            Stacks with the label's {template.rotation}° print rotation above — this field will
+                            appear rotated {(template.rotation + f.rotation) % 360}° total. Leave this at 0° if
+                            you just want the whole label (including this field) to rotate together.
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-6 pt-5">
