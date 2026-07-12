@@ -4,7 +4,17 @@ import React, { useRef, useState, useEffect } from 'react';
 import { PrintTestBoard } from '@api/BoardSDK';
 import { saveTemplate } from '@generated/utils/mondayData';
 import { flattenObject } from '@generated/utils/flatten';
-import { LayoutGrid, Sparkles, Webhook } from 'lucide-react';
+import {
+  LayoutGrid,
+  Sparkles,
+  Webhook,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+} from 'lucide-react';
 
 const PX_PER_MM = 4.2; // Visual scale for canvas
 
@@ -187,12 +197,21 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
   function onPointerMove(e) {
     const d = dragState.current;
     if (!d) return;
-    const dxMm = (e.clientX - d.startX) / PX_PER_MM;
-    const dyMm = (e.clientY - d.startY) / PX_PER_MM;
-    
+
+    // The canvas itself is visually rotated (template.rotation), so a screen-space mouse
+    // delta has to be rotated back into the canvas's local (unrotated) coordinate space —
+    // otherwise dragging feels like it's moving in the wrong direction once rotated.
+    const dxScreen = e.clientX - d.startX;
+    const dyScreen = e.clientY - d.startY;
+    const theta = ((template.rotation || 0) * Math.PI) / 180;
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+    const dxMm = (dxScreen * cos + dyScreen * sin) / PX_PER_MM;
+    const dyMm = (-dxScreen * sin + dyScreen * cos) / PX_PER_MM;
+
     const newX = Math.max(0, Math.min(template.widthMm - 10, Math.round(d.origX + dxMm)));
     const newY = Math.max(0, Math.min(template.heightMm - 5, Math.round(d.origY + dyMm)));
-    
+
     updateField(d.fieldId, { x: newX, y: newY });
   }
 
@@ -229,6 +248,36 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
       ]
     }));
     setSelectedFieldId(newId);
+  }
+
+  function alignField(fieldId, position) {
+    const f = template.fields.find((field) => field.id === fieldId);
+    if (!f) return;
+
+    const patch = {};
+    switch (position) {
+      case 'left':
+        patch.x = 0;
+        break;
+      case 'center-h':
+        patch.x = Math.max(0, Math.round((template.widthMm - f.width) / 2));
+        break;
+      case 'right':
+        patch.x = Math.max(0, Math.round(template.widthMm - f.width));
+        break;
+      case 'top':
+        patch.y = 0;
+        break;
+      case 'center-v':
+        patch.y = Math.max(0, Math.round((template.heightMm - f.height) / 2));
+        break;
+      case 'bottom':
+        patch.y = Math.max(0, Math.round(template.heightMm - f.height));
+        break;
+      default:
+        return;
+    }
+    updateField(fieldId, patch);
   }
 
   function removeField(fieldId) {
@@ -464,22 +513,25 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                   <div
                     key={f.id}
                     onPointerDown={(e) => onPointerDown(f.id, e)}
-                    className={`absolute select-none overflow-hidden text-black transition-all cursor-move ${
-                      isSelected 
-                        ? 'outline-2 outline-dashed outline-primary outline-offset-1 bg-primary/5' 
+                    className={`absolute select-none text-black transition-all cursor-move ${
+                      f.wrap ? 'overflow-visible' : 'overflow-hidden'
+                    } ${
+                      isSelected
+                        ? 'outline-2 outline-dashed outline-primary outline-offset-1 bg-primary/5'
                         : 'hover:outline-1 hover:outline-dashed hover:outline-primary/50'
                     }`}
                     style={{
                       left: f.x * PX_PER_MM,
                       top: f.y * PX_PER_MM,
                       width: f.width * PX_PER_MM,
-                      height: f.height * PX_PER_MM,
+                      height: f.wrap ? 'auto' : f.height * PX_PER_MM,
+                      minHeight: f.height * PX_PER_MM,
                       fontSize: f.fontSize * PX_PER_MM,
                       fontWeight: f.bold ? 'bold' : 'normal',
                       textAlign: f.align || 'left',
                       lineHeight: 1.2,
                       display: 'flex',
-                      alignItems: 'center',
+                      alignItems: f.wrap ? 'flex-start' : 'center',
                       justifyContent: f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start',
                       transform: `rotate(${-(template.rotation || 0)}deg)`,
                       transformOrigin: 'center center',
@@ -491,7 +543,7 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                         {columnTitle(f.columnId)}:
                       </span>
                     )}
-                    <span className="truncate">{displayVal}</span>
+                    <span className={f.wrap ? 'whitespace-normal break-words' : 'truncate'}>{displayVal}</span>
                   </div>
                 );
               })}
@@ -546,6 +598,18 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                       </div>
 
                       <div className="space-y-1.5">
+                        <label htmlFor={`field-height-${f.id}`} className="text-[11px] font-medium text-muted-foreground">Height (mm)</label>
+                        <input
+                          id={`field-height-${f.id}`}
+                          type="number"
+                          min="3"
+                          value={f.height}
+                          onChange={(e) => updateField(f.id, { height: Number(e.target.value) })}
+                          className="h-8 w-full rounded border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
                         <label htmlFor={`field-align-${f.id}`} className="text-[11px] font-medium text-muted-foreground">Alignment</label>
                         <select
                           id={`field-align-${f.id}`}
@@ -579,6 +643,71 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                           />
                           Show Label
                         </label>
+
+                        <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-muted-foreground select-none">
+                          <input
+                            type="checkbox"
+                            checked={f.wrap || false}
+                            onChange={(e) => updateField(f.id, { wrap: e.target.checked })}
+                            className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
+                          />
+                          Wrap Text
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-medium text-muted-foreground">Position</label>
+                      <div className="flex items-center gap-1.5 bg-muted/40 p-2 rounded-lg border border-border w-fit">
+                        <button
+                          type="button"
+                          title="Align left"
+                          onClick={() => alignField(f.id, 'left')}
+                          className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                        >
+                          <AlignHorizontalJustifyStart className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Center horizontally"
+                          onClick={() => alignField(f.id, 'center-h')}
+                          className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                        >
+                          <AlignHorizontalJustifyCenter className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Align right"
+                          onClick={() => alignField(f.id, 'right')}
+                          className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                        >
+                          <AlignHorizontalJustifyEnd className="w-4 h-4" />
+                        </button>
+                        <div className="w-px h-6 bg-border mx-1" />
+                        <button
+                          type="button"
+                          title="Align top"
+                          onClick={() => alignField(f.id, 'top')}
+                          className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                        >
+                          <AlignVerticalJustifyStart className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Center vertically"
+                          onClick={() => alignField(f.id, 'center-v')}
+                          className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                        >
+                          <AlignVerticalJustifyCenter className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Align bottom"
+                          onClick={() => alignField(f.id, 'bottom')}
+                          className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                        >
+                          <AlignVerticalJustifyEnd className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                   </div>

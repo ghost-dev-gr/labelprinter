@@ -5,7 +5,7 @@ import { listPrinters, printLabel } from '@generated/utils/qzPrint';
 import { DEFAULT_CONNECTION_SETTINGS, saveConnectionSettings } from '@generated/utils/connectionSettings';
 import { RefreshCw, Loader2, CheckCircle2, XCircle, Info, Settings, HelpCircle, FileText } from 'lucide-react';
 
-export default function ConnectionSettings({ boardId, connectionSettings, setConnectionSettings }) {
+export default function ConnectionSettings({ boardId, connectionSettings, setConnectionSettings, template, columns }) {
   const [printers, setPrinters] = useState([]);
   const [loading, setLoading] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -74,49 +74,64 @@ export default function ConnectionSettings({ boardId, connectionSettings, setCon
     setTestPrintStatus({ success: null, message: '' });
     
     try {
-      // Create a simple test template (50x30mm label)
-      const testTemplate = {
-        widthMm: 50,
-        heightMm: 30,
-        rotation: 0,
-        fields: [
-      { columnId: 'name', x: 2, y: 2, width: 46, height: 6, fontSize: 4, bold: true, align: 'left', showLabel: false },
-      { columnId: 'sku', x: 2, y: 10, width: 46, height: 5, fontSize: 3, bold: false, align: 'left', showLabel: true },
-      { columnId: 'price', x: 2, y: 17, width: 22, height: 5, fontSize: 3, bold: false, align: 'left', showLabel: true },
-      { columnId: 'quantity', x: 26, y: 17, width: 22, height: 5, fontSize: 3, bold: false, align: 'right', showLabel: true }
-      ]
-        };
-      
-        // Test values
-        const testValues = {
+      // Use whatever is actually designed in the Label Designer so "Test Print" reflects
+      // real edits; only fall back to a canned demo template if nothing's been designed yet.
+      const hasDesignedTemplate = template && template.fields && template.fields.length > 0;
+
+      const testTemplate = hasDesignedTemplate
+        ? template
+        : {
+            widthMm: 50,
+            heightMm: 30,
+            rotation: 0,
+            fields: [
+              { columnId: 'name', x: 2, y: 2, width: 46, height: 6, fontSize: 4, bold: true, align: 'left', showLabel: false },
+              { columnId: 'sku', x: 2, y: 10, width: 46, height: 5, fontSize: 3, bold: false, align: 'left', showLabel: true },
+              { columnId: 'price', x: 2, y: 17, width: 22, height: 5, fontSize: 3, bold: false, align: 'left', showLabel: true },
+              { columnId: 'quantity', x: 26, y: 17, width: 22, height: 5, fontSize: 3, bold: false, align: 'right', showLabel: true }
+            ]
+          };
+
+      // Sample values for a test print — real per-item data isn't available from this tab.
+      const SAMPLE_VALUES = {
         name: 'Test Product',
-      sku: 'TEST-SKU-123',
-      price: 'EUR 19.99',
-      quantity: '2'
+        sku: 'TEST-SKU-123',
+        price: 'EUR 19.99',
+        totalPrice: 'EUR 39.98',
+        quantity: '2',
+        printStatus: 'Not Printed',
+        group: 'Test Group'
       };
-      
-        // Mock columns for label generation
-      const testColumns = [
-    { id: 'sku', title: 'SKU' },
-      { id: 'price', title: 'Price' },
-      { id: 'quantity', title: 'Qty' }
-        ];
-      
+
+      const testValues = {};
+      testTemplate.fields.forEach((f) => {
+        testValues[f.columnId] = SAMPLE_VALUES[f.columnId] ?? `[${f.columnId}]`;
+      });
+
+      const testColumns = columns && columns.length > 0 ? columns : [
+        { id: 'sku', title: 'SKU' },
+        { id: 'price', title: 'Price' },
+        { id: 'quantity', title: 'Qty' }
+      ];
+
       const printerName = settings.printerOverride || 'default';
-    console.log('[ConnectionSettings] Test print triggered - printer:', printerName);
-      
-    await printLabel(
-  printerName,
-          testTemplate,
-          testValues,
-          testColumns,
-          { connSettings: settings, copies: settings.copies || 1 }
-        );
-      
-        setTestPrintStatus({
-          success: true,
-          message: 'Test label sent to ' + (settings.printerOverride || 'default printer')
-        });
+      console.log(
+        '[ConnectionSettings] Test print triggered - printer:', printerName,
+        '- using', hasDesignedTemplate ? 'your Label Designer template' : 'the default demo template'
+      );
+
+      await printLabel(
+        printerName,
+        testTemplate,
+        testValues,
+        testColumns,
+        { connSettings: settings, copies: settings.copies || 1 }
+      );
+
+      setTestPrintStatus({
+        success: true,
+        message: `Test label sent to ${settings.printerOverride || 'default printer'} using ${hasDesignedTemplate ? 'your Label Designer template' : 'the default demo template'}`
+      });
       } catch (err) {
         console.error('[ConnectionSettings] Test print failed:', err);
         setTestPrintStatus({

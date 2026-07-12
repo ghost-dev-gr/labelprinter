@@ -300,7 +300,7 @@ export default function App() {
     }
 
     markExistingInboxAsSeen();
-    const interval = setInterval(checkForNewWebhook, 3000);
+    const interval = setInterval(checkForNewWebhook, 1000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [template, connectionSettings]);
 
@@ -395,6 +395,8 @@ export default function App() {
               boardId={boardId}
               connectionSettings={connectionSettings}
               setConnectionSettings={setConnectionSettings}
+              template={template}
+              columns={COLUMNS}
             />
           </TabsContent>
         </Tabs>

@@ -203,12 +203,16 @@ export function buildLabelHtml(template, values, columns = []) {
       formattedText = `<span style="opacity: 0.6; font-size: 80%; margin-right: 4px;">${escapeHtml(colTitle)}:</span>${formattedText}`;
     }
 
+    const sizeStyle = f.wrap
+      ? `width:${f.width}mm;min-height:${f.height}mm;height:auto;overflow:visible;white-space:normal;word-break:break-word;`
+      : `width:${f.width}mm;height:${f.height}mm;overflow:hidden;white-space:nowrap;`;
+
     return (
       `<div style="position:absolute;left:${f.x}mm;top:${f.y}mm;` +
-      `width:${f.width}mm;height:${f.height}mm;` +
+      sizeStyle +
       `font-size:${f.fontSize}mm;font-family:sans-serif;line-height:1.2;` +
       `text-align:${f.align || 'left'};font-weight:${f.bold ? 'bold' : 'normal'};` +
-      `overflow:hidden;white-space:nowrap;display:flex;align-items:center;` +
+      `display:flex;align-items:${f.wrap ? 'flex-start' : 'center'};` +
       `justify-content:${f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'};` +
       `color:#000;">${formattedText}</div>`
     );
