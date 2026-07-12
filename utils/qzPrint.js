@@ -343,15 +343,23 @@ export function renderLabelToCanvas(canvas, template, values, columns = [], dpi 
   });
 }
 
-export async function printLabel(printerName, template, values, columns, { connSettings, copies = 1 } = {}) {
+// Generates the exact PNG that will be sent to the printer — nothing else in this file
+// generates print image bytes any other way. Use this to show the user the literal file
+// before printing it (see printImageDataUrl), not a live-updating approximation.
+export function generateLabelImageDataUrl(template, values, columns = [], dpi = 300) {
+  const canvas = document.createElement('canvas');
+  renderLabelToCanvas(canvas, template, values, columns, dpi);
+  return canvas.toDataURL('image/png');
+}
+
+// Sends a PRE-GENERATED image (from generateLabelImageDataUrl) to the printer as-is — no
+// regeneration, so whatever was shown to the user as a preview is byte-for-byte what prints.
+export async function printImageDataUrl(printerName, template, dataUrl, { connSettings, copies = 1 } = {}) {
   await ensureConnected(connSettings);
   const qz = getQz();
 
   const { pageWidth, pageHeight } = getPrintedDimensions(template);
-
-  const canvas = document.createElement('canvas');
-  renderLabelToCanvas(canvas, template, values, columns, 300);
-  const base64 = canvas.toDataURL('image/png').split(',')[1];
+  const base64 = dataUrl.split(',')[1];
 
   const config = qz.configs.create(printerName, {
     size: { width: pageWidth, height: pageHeight },
@@ -364,4 +372,9 @@ export async function printLabel(printerName, template, values, columns, { connS
   const data = [{ type: 'pixel', format: 'image', flavor: 'base64', data: base64 }];
 
   await qz.print(config, data);
+}
+
+export async function printLabel(printerName, template, values, columns, opts = {}) {
+  const dataUrl = generateLabelImageDataUrl(template, values, columns, 300);
+  await printImageDataUrl(printerName, template, dataUrl, opts);
 }

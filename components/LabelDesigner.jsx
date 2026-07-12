@@ -3,7 +3,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { PrintTestBoard } from '@api/BoardSDK';
 import { saveTemplate } from '@generated/utils/mondayData';
-import { printLabel, getFieldFootprint, renderLabelToCanvas } from '@generated/utils/qzPrint';
+import { getFieldFootprint, getPrintedDimensions, computeFieldPlacement, renderLabelToCanvas, generateLabelImageDataUrl, printImageDataUrl } from '@generated/utils/qzPrint';
 import { flattenObject, resolveWebhookValue } from '@generated/utils/flatten';
 import {
   LayoutGrid,
@@ -25,6 +25,7 @@ const MM_TO_PX = 96 / 25.4;
 
 export default function LabelDesigner({ boardId, template, setTemplate, connectionSettings }) {
   const dragState = useRef(null);
+  const rotatedDragState = useRef(null);
   const [selectedFieldId, setSelectedFieldId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [testPrinting, setTestPrinting] = useState(false);
@@ -39,6 +40,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
   const [apiToken, setApiToken] = useState('');
   const [apiTokenSaving, setApiTokenSaving] = useState(false);
   const [showRealView, setShowRealView] = useState(false);
+  const [printPreview, setPrintPreview] = useState(null);
   const previewCanvasRef = useRef(null);
 
   // Load the configured "active" webhook name (which /webhook/<name> path feeds this picker)
@@ -286,6 +288,52 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
     window.removeEventListener('pointerup', onPointerUp);
   }
 
+  // Dragging directly in the rotated "Real View" — lets you position a field exactly where
+  // you want it in the FINAL PRINTED result, with no mental rotation math required. A
+  // screen-space drag delta here is a page-space delta (the Real View isn't itself further
+  // CSS-rotated), so it has to be rotated by -labelRotation to find how much the field's
+  // local (pre-rotation) x/y should change — the exact inverse of computeFieldPlacement's
+  // forward rotation.
+  function onRotatedPointerDown(fieldId, e) {
+    const field = template.fields.find((f) => f.id === fieldId);
+    if (!field) return;
+    setSelectedFieldId(fieldId);
+    rotatedDragState.current = {
+      fieldId,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: field.x,
+      origY: field.y
+    };
+    window.addEventListener('pointermove', onRotatedPointerMove);
+    window.addEventListener('pointerup', onRotatedPointerUp);
+  }
+
+  function onRotatedPointerMove(e) {
+    const d = rotatedDragState.current;
+    if (!d) return;
+
+    const pageDx = (e.clientX - d.startX) / MM_TO_PX;
+    const pageDy = (e.clientY - d.startY) / MM_TO_PX;
+
+    const theta = ((template.rotation || 0) * Math.PI) / 180;
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+    const localDx = pageDx * cos + pageDy * sin;
+    const localDy = -pageDx * sin + pageDy * cos;
+
+    updateField(d.fieldId, {
+      x: Math.round(d.origX + localDx),
+      y: Math.round(d.origY + localDy)
+    });
+  }
+
+  function onRotatedPointerUp() {
+    rotatedDragState.current = null;
+    window.removeEventListener('pointermove', onRotatedPointerMove);
+    window.removeEventListener('pointerup', onRotatedPointerUp);
+  }
+
   function addField(columnId) {
     const existingField = template.fields.find(f => f.columnId === columnId);
     if (existingField) {
@@ -371,17 +419,15 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
     }
   }
 
-  // Print with the exact template currently on screen (even if not saved yet) using the
-  // last webhook's real data — the fastest way to check a design without switching tabs.
-  async function handleTestPrint() {
+  // Step 1: generate the exact PNG that would be sent to the printer (using the last
+  // webhook's real data) and show it as a literal <img> — not a live canvas, not an
+  // approximation. Step 2 (handleConfirmPrint) sends those exact same bytes, unchanged.
+  async function handlePreviewPrint() {
     setTestPrintStatus('');
+    setPrintPreview(null);
 
     if (!template.fields || template.fields.length === 0) {
       setTestPrintStatus('Add at least one field to the label first.');
-      return;
-    }
-    if (!connectionSettings || !connectionSettings.printerOverride) {
-      setTestPrintStatus('Configure a printer in the Connection tab first.');
       return;
     }
 
@@ -401,17 +447,37 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
         values[f.columnId] = resolveWebhookValue(flat, f.columnId) ?? '';
       });
 
-      await printLabel(
+      const dataUrl = generateLabelImageDataUrl(template, values, [], 300);
+      setPrintPreview(dataUrl);
+    } catch (err) {
+      console.error('Failed to generate print preview:', err);
+      setTestPrintStatus('Failed to generate preview: ' + err.message);
+    } finally {
+      setTestPrinting(false);
+    }
+  }
+
+  // Step 2: sends the EXACT image shown in the preview — no regeneration — so what you
+  // confirmed is byte-for-byte what reaches the printer.
+  async function handleConfirmPrint() {
+    if (!printPreview) return;
+    if (!connectionSettings || !connectionSettings.printerOverride) {
+      setTestPrintStatus('Configure a printer in the Connection tab first.');
+      return;
+    }
+
+    setTestPrinting(true);
+    try {
+      await printImageDataUrl(
         connectionSettings.printerOverride,
         template,
-        values,
-        [],
+        printPreview,
         { connSettings: connectionSettings, copies: 1 }
       );
-
       setTestPrintStatus(`Sent to ${connectionSettings.printerOverride}.`);
+      setPrintPreview(null);
     } catch (err) {
-      console.error('Test print failed:', err);
+      console.error('Print failed:', err);
       setTestPrintStatus('Print failed: ' + err.message);
     } finally {
       setTestPrinting(false);
@@ -639,13 +705,13 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                 </button>
               )}
               <button
-                onClick={handleTestPrint}
+                onClick={handlePreviewPrint}
                 disabled={testPrinting}
-                title="Print using the last webhook's data"
+                title="Generate the exact image that would be sent to the printer, for you to check first"
                 className="h-9 px-4 rounded-md border border-primary/30 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10 transition-all disabled:opacity-50 flex items-center gap-1.5"
               >
                 <Printer className="w-3.5 h-3.5" />
-                {testPrinting ? 'Printing...' : 'Test Print'}
+                {testPrinting ? 'Working...' : 'Preview Print Image'}
               </button>
               <button
                 onClick={handleSaveTemplate}
@@ -659,6 +725,34 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
 
           {testPrintStatus && (
             <p className="text-[11px] text-muted-foreground -mt-4">{testPrintStatus}</p>
+          )}
+
+          {printPreview && (
+            <div className="rounded-xl border-2 border-primary bg-card p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-foreground">
+                  This is the exact PNG that will be sent to the printer — not a canvas, not a live preview, the literal file.
+                </p>
+              </div>
+              <div className="flex justify-center bg-secondary/30 rounded-lg p-4 overflow-auto">
+                <img src={printPreview} alt="Exact print image" className="max-w-full h-auto border border-border shadow-md" />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setPrintPreview(null)}
+                  className="h-9 px-4 rounded-md border border-border bg-background text-xs font-medium text-foreground hover:bg-secondary transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmPrint}
+                  disabled={testPrinting}
+                  className="h-9 px-4 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-all disabled:opacity-50"
+                >
+                  {testPrinting ? 'Sending...' : 'Confirm & Print This Exact Image'}
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Label Canvas — always editable, regardless of rotation */}
@@ -755,20 +849,53 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Editable (normal orientation)</span>
             </div>
 
-            {showRealView && template.rotation > 0 && (
-              <div className="flex flex-col items-center gap-2">
-                {/* Actual <canvas> drawn by renderLabelToCanvas — the EXACT SAME function
-                    printLabel calls to generate the real print image. Not a CSS
-                    approximation — this IS the print output, shown on screen instead of
-                    sent to a printer, so it cannot drift out of sync with what prints. */}
-                <canvas
-                  ref={previewCanvasRef}
-                  className="border border-foreground/30 bg-white shadow-lg rounded-[1px] max-w-full h-auto"
-                  style={{ imageRendering: 'crisp-edges' }}
-                />
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Real View ({template.rotation}° rotated, as printed)</span>
-              </div>
-            )}
+            {showRealView && template.rotation > 0 && (() => {
+              const { pageWidth, pageHeight } = getPrintedDimensions(template);
+              return (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="relative" style={{ width: `${pageWidth}mm`, height: `${pageHeight}mm` }}>
+                    {/* Actual <canvas> drawn by renderLabelToCanvas — the EXACT SAME function
+                        printLabel calls to generate the real print image. Not a CSS
+                        approximation — this IS the print output, shown on screen instead of
+                        sent to a printer, so it cannot drift out of sync with what prints. */}
+                    <canvas
+                      ref={previewCanvasRef}
+                      className="absolute inset-0 w-full h-full border border-foreground/30 bg-white shadow-lg rounded-[1px]"
+                      style={{ imageRendering: 'crisp-edges' }}
+                    />
+                    {/* Transparent draggable overlays, positioned via computeFieldPlacement —
+                        the same placement math the canvas above was drawn with. Drag here to
+                        position fields directly in the final rotated result, no mental
+                        rotation math required. */}
+                    {template.fields.map((f) => {
+                      const placement = computeFieldPlacement(template, f);
+                      const isSelected = selectedFieldId === f.id;
+                      return (
+                        <div
+                          key={f.id}
+                          onPointerDown={(e) => onRotatedPointerDown(f.id, e)}
+                          title={columnTitle(f.columnId)}
+                          className={`absolute cursor-move ${
+                            isSelected
+                              ? 'outline-2 outline-dashed outline-primary bg-primary/10'
+                              : 'outline-1 outline-dashed outline-primary/30 hover:outline-primary/60 hover:bg-primary/5'
+                          }`}
+                          style={{
+                            left: `${placement.left}mm`,
+                            top: `${placement.top}mm`,
+                            width: `${f.width}mm`,
+                            height: `${f.height}mm`,
+                            transform: placement.rotation ? `rotate(${placement.rotation}deg)` : undefined,
+                            transformOrigin: 'center center'
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Real View ({template.rotation}° rotated, as printed) — drag fields here directly</span>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Field Properties */}
