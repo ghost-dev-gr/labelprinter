@@ -215,7 +215,23 @@ export function getFieldFootprint(field) {
   return { footprintWidth: field.width, footprintHeight: field.height, rotation };
 }
 
+// Rotates an (dx,dy) offset by angleDeg, using the same convention as CSS transform:rotate().
+function rotateOffset(dx, dy, angleDeg) {
+  const rad = (angleDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
+}
+
 export function buildLabelHtml(template, values, columns = []) {
+  const { pageWidth, pageHeight, rotation: labelRotation } = getPrintedDimensions(template);
+
+  // Each field's final page position + rotation is computed directly here (composing the
+  // label's rotation with the field's own rotation ourselves), instead of nesting a rotated
+  // field inside a rotated label wrapper in the DOM. QZ Tray's HTML rasterizer is an
+  // embedded renderer, not a full evergreen browser, and does not reliably compose nested
+  // CSS transforms — every field below is emitted as one flat div with a single absolute
+  // position and a single (already-combined) rotation angle, which any renderer handles.
   const fieldsHtml = template.fields.map((f) => {
     const textVal = values[f.columnId];
     let formattedText = escapeHtml(textVal);
@@ -238,59 +254,39 @@ export function buildLabelHtml(template, values, columns = []) {
       `justify-content:${f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'};` +
       `color:#000;`;
 
-    const { footprintWidth, footprintHeight, rotation } = getFieldFootprint(f);
+    const { footprintWidth, footprintHeight } = getFieldFootprint(f);
+    const localCenterX = f.x + footprintWidth / 2;
+    const localCenterY = f.y + footprintHeight / 2;
 
-    if (!rotation) {
-      return (
-        `<div style="position:absolute;left:${f.x}mm;top:${f.y}mm;` +
-        sizeStyle + textStyle + `">${formattedText}</div>`
+    let pageCenterX = localCenterX;
+    let pageCenterY = localCenterY;
+    if (labelRotation) {
+      const offset = rotateOffset(
+        localCenterX - template.widthMm / 2,
+        localCenterY - template.heightMm / 2,
+        labelRotation
       );
+      pageCenterX = pageWidth / 2 + offset.x;
+      pageCenterY = pageHeight / 2 + offset.y;
     }
 
-    // Compute the rotated box's absolute position directly, instead of percentage-based
-    // left:50%/translate(-50%,-50%) centering — QZ Tray's HTML rasterizer is an embedded
-    // renderer, not a full evergreen browser, and mishandled that composition (especially
-    // with swapped inner/outer dimensions), causing clipped/mispositioned/shrunk text.
-    const centerX = f.x + footprintWidth / 2;
-    const centerY = f.y + footprintHeight / 2;
-    const boxLeft = centerX - f.width / 2;
-    const boxTop = centerY - f.height / 2;
+    const effectiveRotation = ((labelRotation + (f.rotation || 0)) % 360 + 360) % 360;
+    const boxLeft = pageCenterX - f.width / 2;
+    const boxTop = pageCenterY - f.height / 2;
+    const rotationStyle = effectiveRotation
+      ? `transform:rotate(${effectiveRotation}deg);transform-origin:center center;`
+      : '';
 
     return (
       `<div style="position:absolute;left:${boxLeft}mm;top:${boxTop}mm;` +
-      sizeStyle + textStyle +
-      `transform:rotate(${rotation}deg);transform-origin:center center;">` +
-      `${formattedText}</div>`
+      sizeStyle + textStyle + rotationStyle +
+      `">${formattedText}</div>`
     );
   }).join('');
 
-  const { pageWidth, pageHeight, rotation } = getPrintedDimensions(template);
-
-  if (rotation === 0) {
-    return (
-      `<div style="position:relative;width:${template.widthMm}mm;` +
-      `height:${template.heightMm}mm;background:#ffffff;overflow:hidden;` +
-      `font-family:Arial,Helvetica,sans-serif;color:#000000;box-sizing:border-box;margin:0;padding:0;">${fieldsHtml}</div>`
-    );
-  }
-
-  // Rotate the actual rendered content ourselves (rather than relying on the printer
-  // driver/QZ Tray's own rotation option, which isn't honored consistently across
-  // drivers) and size the outer page to the rotated bounding box. Position computed
-  // directly (not percentage-based left:50%/translate) for the same renderer-compatibility
-  // reason as the per-field rotation above.
-  const pageCenterX = pageWidth / 2;
-  const pageCenterY = pageHeight / 2;
-  const labelBoxLeft = pageCenterX - template.widthMm / 2;
-  const labelBoxTop = pageCenterY - template.heightMm / 2;
-
   return (
     `<div style="position:relative;width:${pageWidth}mm;height:${pageHeight}mm;` +
-    `background:#ffffff;overflow:hidden;margin:0;padding:0;">` +
-    `<div style="position:absolute;left:${labelBoxLeft}mm;top:${labelBoxTop}mm;width:${template.widthMm}mm;height:${template.heightMm}mm;` +
-    `font-family:Arial,Helvetica,sans-serif;color:#000000;box-sizing:border-box;` +
-    `transform:rotate(${rotation}deg);transform-origin:center center;">` +
-    `${fieldsHtml}</div></div>`
+    `background:#ffffff;overflow:hidden;margin:0;padding:0;">${fieldsHtml}</div>`
   );
 }
 
