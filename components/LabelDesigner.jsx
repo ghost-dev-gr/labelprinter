@@ -380,7 +380,7 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
 
           <div className="space-y-1.5">
             <label htmlFor="rotation" className="text-xs font-medium text-muted-foreground">Physical Print Rotation</label>
-            <p className="text-[10px] text-muted-foreground">Rotates the label on the printer. Text stays upright.</p>
+            <p className="text-[10px] text-muted-foreground">Rotates the entire label (including text) on the printer, exactly as previewed below.</p>
             <select
               id="rotation"
               value={template.rotation || 0}
@@ -540,7 +540,7 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                 Drag fields to position them
                 {template.rotation > 0 && (
                   <span className="ml-2 px-2 py-0.5 bg-primary/10 text-primary text-[11px] font-medium rounded">
-                    Print rotation: {template.rotation}° (text stays upright)
+                    Print rotation: {template.rotation}° (whole label rotates together, exactly as shown)
                   </span>
                 )}
               </p>
@@ -594,10 +594,7 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                       lineHeight: 1.2,
                       display: 'flex',
                       alignItems: f.wrap ? 'flex-start' : 'center',
-                      justifyContent: f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start',
-                      transform: `rotate(${-(template.rotation || 0)}deg)`,
-                      transformOrigin: 'center center',
-                      transition: 'transform 0.3s ease'
+                      justifyContent: f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'
                     }}
                   >
                     {f.showLabel && (

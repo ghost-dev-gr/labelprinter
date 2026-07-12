@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { listPrinters, printLabel } from '@generated/utils/qzPrint';
 import { DEFAULT_CONNECTION_SETTINGS, saveConnectionSettings } from '@generated/utils/connectionSettings';
+import { flattenObject } from '@generated/utils/flatten';
 import { RefreshCw, Loader2, CheckCircle2, XCircle, Info, Settings, HelpCircle, FileText } from 'lucide-react';
 
 export default function ConnectionSettings({ boardId, connectionSettings, setConnectionSettings, template, columns }) {
@@ -74,55 +75,35 @@ export default function ConnectionSettings({ boardId, connectionSettings, setCon
     setTestPrintStatus({ success: null, message: '' });
     
     try {
-      // Use whatever is actually designed in the Label Designer so "Test Print" reflects
-      // real edits; only fall back to a canned demo template if nothing's been designed yet.
-      const hasDesignedTemplate = template && template.fields && template.fields.length > 0;
+      if (!template || !template.fields || template.fields.length === 0) {
+        setTestPrintStatus({ success: false, message: 'Design a label in the Label Designer tab first.' });
+        return;
+      }
 
-      const testTemplate = hasDesignedTemplate
-        ? template
-        : {
-            widthMm: 50,
-            heightMm: 30,
-            rotation: 0,
-            fields: [
-              { columnId: 'name', x: 2, y: 2, width: 46, height: 6, fontSize: 4, bold: true, align: 'left', showLabel: false },
-              { columnId: 'sku', x: 2, y: 10, width: 46, height: 5, fontSize: 3, bold: false, align: 'left', showLabel: true },
-              { columnId: 'price', x: 2, y: 17, width: 22, height: 5, fontSize: 3, bold: false, align: 'left', showLabel: true },
-              { columnId: 'quantity', x: 26, y: 17, width: 22, height: 5, fontSize: 3, bold: false, align: 'right', showLabel: true }
-            ]
-          };
+      // Print with the real values from the last webhook — same source auto-print uses —
+      // instead of fake placeholder text, so this reflects your actual label exactly.
+      const inboxRes = await fetch('/api/webhook-inbox');
+      const inbox = await inboxRes.json();
 
-      // Sample values for a test print — real per-item data isn't available from this tab.
-      const SAMPLE_VALUES = {
-        name: 'Test Product',
-        sku: 'TEST-SKU-123',
-        price: 'EUR 19.99',
-        totalPrice: 'EUR 39.98',
-        quantity: '2',
-        printStatus: 'Not Printed',
-        group: 'Test Group'
-      };
+      if (!inbox.payload) {
+        setTestPrintStatus({ success: false, message: 'No webhook received yet — trigger one first so there is real data to print.' });
+        return;
+      }
 
+      const flat = flattenObject(inbox.payload);
       const testValues = {};
-      testTemplate.fields.forEach((f) => {
-        testValues[f.columnId] = SAMPLE_VALUES[f.columnId] ?? `[${f.columnId}]`;
+      template.fields.forEach((f) => {
+        testValues[f.columnId] = flat[f.columnId] ?? '';
       });
 
-      const testColumns = columns && columns.length > 0 ? columns : [
-        { id: 'sku', title: 'SKU' },
-        { id: 'price', title: 'Price' },
-        { id: 'quantity', title: 'Qty' }
-      ];
+      const testColumns = columns && columns.length > 0 ? columns : [];
 
       const printerName = settings.printerOverride || 'default';
-      console.log(
-        '[ConnectionSettings] Test print triggered - printer:', printerName,
-        '- using', hasDesignedTemplate ? 'your Label Designer template' : 'the default demo template'
-      );
+      console.log('[ConnectionSettings] Test print triggered - printer:', printerName, '- values:', testValues);
 
       await printLabel(
         printerName,
-        testTemplate,
+        template,
         testValues,
         testColumns,
         { connSettings: settings, copies: settings.copies || 1 }
@@ -130,7 +111,7 @@ export default function ConnectionSettings({ boardId, connectionSettings, setCon
 
       setTestPrintStatus({
         success: true,
-        message: `Test label sent to ${settings.printerOverride || 'default printer'} using ${hasDesignedTemplate ? 'your Label Designer template' : 'the default demo template'}`
+        message: `Test label sent to ${settings.printerOverride || 'default printer'} using your Label Designer template and the last webhook's data`
       });
       } catch (err) {
         console.error('[ConnectionSettings] Test print failed:', err);
