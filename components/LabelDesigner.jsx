@@ -654,7 +654,13 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
               {template.fields.map((f) => {
                 const isSelected = selectedFieldId === f.id;
                 const displayVal = sampleData[f.columnId] || `[${columnTitle(f.columnId)}]`;
-                const { footprintWidth, footprintHeight, rotation } = getFieldFootprint(f);
+                // Footprint (for layout/position/clamping) is based on the field's own
+                // rotation only — that's the local, pre-print-rotation frame dragging works
+                // in. The visual rotation shown here combines the label's print rotation too,
+                // so alignment (top/bottom/left/right) previews exactly as it will print —
+                // a 90/180/270 label rotation flips how "top" or "left" ends up looking.
+                const { footprintWidth, footprintHeight } = getFieldFootprint(f);
+                const effectiveRotation = ((template.rotation || 0) + (f.rotation || 0)) % 360;
 
                 const contentClassName = `absolute select-none text-black transition-all ${
                   f.wrap ? 'overflow-visible' : 'overflow-hidden'
@@ -690,7 +696,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                   </>
                 );
 
-                if (!rotation) {
+                if (!effectiveRotation) {
                   return (
                     <div
                       key={f.id}
@@ -703,10 +709,12 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                   );
                 }
 
-                // Outer div reserves the ROTATED footprint (width/height swapped for
-                // 90/270) — this is what dragging, clamping and alignment position against.
+                // Outer div reserves the field's OWN-rotation footprint (width/height
+                // swapped only for a 90/270 field rotation) — this is what dragging,
+                // clamping and alignment position against, in the label's local frame.
                 // Inner div keeps the field's declared (unrotated) size and is centered +
-                // rotated within that footprint, matching the print HTML exactly.
+                // rotated by the COMBINED (label + field) rotation, previewing exactly what
+                // will print.
                 return (
                   <div
                     key={f.id}
@@ -720,7 +728,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                         left: '50%',
                         top: '50%',
                         ...contentStyle,
-                        transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+                        transform: `translate(-50%, -50%) rotate(${effectiveRotation}deg)`,
                         transformOrigin: 'center center'
                       }}
                     >
