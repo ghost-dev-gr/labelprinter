@@ -3,7 +3,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { PrintTestBoard } from '@api/BoardSDK';
 import { saveTemplate } from '@generated/utils/mondayData';
-import { getFieldFootprint, getPrintedDimensions, computeFieldPlacement, renderLabelToCanvas, generateLabelImageDataUrl, printImageDataUrl } from '@generated/utils/qzPrint';
+import { getFieldFootprint, getPrintedDimensions, computeFieldPlacement, renderLabelToCanvas, generateLabelImageDataUrl, printImageDataUrl, printLabel } from '@generated/utils/qzPrint';
 import { flattenObject, resolveWebhookValue } from '@generated/utils/flatten';
 import {
   LayoutGrid,
@@ -43,6 +43,18 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
   const [printPreview, setPrintPreview] = useState(null);
   const previewCanvasRef = useRef(null);
 
+  // Quick Print — bypasses the field/template/webhook system entirely: type text, pick a
+  // size, print. Its own tiny one-field template, built fresh on every print.
+  const [quickText, setQuickText] = useState('');
+  const [quickWidth, setQuickWidth] = useState(60);
+  const [quickHeight, setQuickHeight] = useState(30);
+  const [quickFontSize, setQuickFontSize] = useState(6);
+  const [quickRotation, setQuickRotation] = useState(0);
+  const [quickBold, setQuickBold] = useState(false);
+  const [quickWrap, setQuickWrap] = useState(true);
+  const [quickPrinting, setQuickPrinting] = useState(false);
+  const [quickStatus, setQuickStatus] = useState('');
+
   // Load the configured "active" webhook name (which /webhook/<name> path feeds this picker)
   // and the monday.com API token used to resolve group titles from webhook group ids.
   useEffect(() => {
@@ -64,9 +76,50 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
         console.error('Failed to load monday API token:', err);
       }
     }
+    async function loadQuickPrintSettings() {
+      try {
+        const res = await fetch(`/api/storage?key=quick_print_${boardId}`);
+        const json = await res.json();
+        if (!json.value) return;
+        const saved = JSON.parse(json.value);
+        if (saved.text !== undefined) setQuickText(saved.text);
+        if (saved.width !== undefined) setQuickWidth(saved.width);
+        if (saved.height !== undefined) setQuickHeight(saved.height);
+        if (saved.fontSize !== undefined) setQuickFontSize(saved.fontSize);
+        if (saved.rotation !== undefined) setQuickRotation(saved.rotation);
+        if (saved.bold !== undefined) setQuickBold(saved.bold);
+        if (saved.wrap !== undefined) setQuickWrap(saved.wrap);
+      } catch (err) {
+        console.error('Failed to load quick print settings:', err);
+      }
+    }
     loadWebhookName();
     loadApiToken();
-  }, []);
+    loadQuickPrintSettings();
+  }, [boardId]);
+
+  async function saveQuickPrintSettings() {
+    try {
+      await fetch('/api/storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: `quick_print_${boardId}`,
+          value: JSON.stringify({
+            text: quickText,
+            width: quickWidth,
+            height: quickHeight,
+            fontSize: quickFontSize,
+            rotation: quickRotation,
+            bold: quickBold,
+            wrap: quickWrap
+          })
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to save quick print settings:', err);
+    }
+  }
 
   async function saveWebhookName() {
     const name = webhookName.trim() || 'test2';
@@ -406,10 +459,65 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
     return allColumns.find((c) => c.id === columnId)?.title || columnId;
   }
 
+  // Builds a throwaway one-field template on the fly and prints it immediately — no
+  // interaction with the saved label template, webhook data, or the field list at all.
+  async function handleQuickPrint() {
+    setQuickStatus('');
+
+    if (!quickText.trim()) {
+      setQuickStatus('Type some text first.');
+      return;
+    }
+    if (!connectionSettings || !connectionSettings.printerOverride) {
+      setQuickStatus('Configure a printer in the Connection tab first.');
+      return;
+    }
+
+    setQuickPrinting(true);
+    try {
+      const margin = 2;
+      const quickTemplate = {
+        widthMm: quickWidth,
+        heightMm: quickHeight,
+        rotation: quickRotation,
+        fields: [{
+          id: 'quick-field',
+          columnId: 'quickText',
+          x: margin,
+          y: margin,
+          width: Math.max(1, quickWidth - margin * 2),
+          height: Math.max(1, quickHeight - margin * 2),
+          fontSize: quickFontSize,
+          align: 'center',
+          verticalAlign: 'middle',
+          bold: quickBold,
+          wrap: quickWrap,
+          rotation: 0
+        }]
+      };
+
+      await printLabel(
+        connectionSettings.printerOverride,
+        quickTemplate,
+        { quickText },
+        [],
+        { connSettings: connectionSettings, copies: 1 }
+      );
+
+      setQuickStatus(`Sent to ${connectionSettings.printerOverride}.`);
+    } catch (err) {
+      console.error('Quick print failed:', err);
+      setQuickStatus('Print failed: ' + err.message);
+    } finally {
+      setQuickPrinting(false);
+    }
+  }
+
   async function handleSaveTemplate() {
     setSaving(true);
     try {
       await saveTemplate(boardId, template);
+      await saveQuickPrintSettings();
       alert('Template saved successfully!');
     } catch (err) {
       console.error('Failed to save template:', err);
@@ -485,7 +593,112 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+    <div className="space-y-6">
+      {/* Quick Print — standalone, bypasses the field/template/webhook system entirely */}
+      <div className="bg-card rounded-xl border border-border p-5 shadow-sm space-y-4">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Printer className="w-4 h-4 text-primary" />
+            Quick Print
+          </h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            Type or paste any text, pick a size, and print it immediately — independent of the label template below.
+          </p>
+        </div>
+
+        <textarea
+          value={quickText}
+          onChange={(e) => setQuickText(e.target.value)}
+          placeholder="Type or paste text to print..."
+          className="w-full h-20 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none"
+        />
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="space-y-1.5">
+            <label htmlFor="quick-width" className="text-[11px] font-medium text-muted-foreground">Width (mm)</label>
+            <input
+              id="quick-width"
+              type="number"
+              min="10"
+              value={quickWidth}
+              onChange={(e) => setQuickWidth(Number(e.target.value))}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs text-foreground focus:outline-none"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="quick-height" className="text-[11px] font-medium text-muted-foreground">Height (mm)</label>
+            <input
+              id="quick-height"
+              type="number"
+              min="5"
+              value={quickHeight}
+              onChange={(e) => setQuickHeight(Number(e.target.value))}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs text-foreground focus:outline-none"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="quick-font" className="text-[11px] font-medium text-muted-foreground">Font Size (mm)</label>
+            <input
+              id="quick-font"
+              type="number"
+              step="0.5"
+              min="1"
+              value={quickFontSize}
+              onChange={(e) => setQuickFontSize(Number(e.target.value))}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs text-foreground focus:outline-none"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="quick-rotation" className="text-[11px] font-medium text-muted-foreground">Rotation</label>
+            <select
+              id="quick-rotation"
+              value={quickRotation}
+              onChange={(e) => setQuickRotation(Number(e.target.value))}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs text-foreground focus:outline-none"
+            >
+              <option value="0">0°</option>
+              <option value="90">90°</option>
+              <option value="180">180°</option>
+              <option value="270">270°</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6">
+          <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-muted-foreground select-none">
+            <input
+              type="checkbox"
+              checked={quickBold}
+              onChange={(e) => setQuickBold(e.target.checked)}
+              className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
+            />
+            Bold
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-muted-foreground select-none">
+            <input
+              type="checkbox"
+              checked={quickWrap}
+              onChange={(e) => setQuickWrap(e.target.checked)}
+              className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
+            />
+            Wrap Text
+          </label>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleQuickPrint}
+            disabled={quickPrinting}
+            className="h-10 px-5 rounded-md bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all disabled:opacity-50 flex items-center gap-2"
+          >
+            <Printer className="w-4 h-4" />
+            {quickPrinting ? 'Printing...' : 'Print This Text'}
+          </button>
+          {quickStatus && <p className="text-[11px] text-muted-foreground">{quickStatus}</p>}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
       {/* Configuration Column */}
       <div className="lg:col-span-4 space-y-6">
         <div className="bg-card rounded-xl border border-border p-5 space-y-5 shadow-sm">
@@ -1125,6 +1338,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
           )}
         </div>
       </div>
+    </div>
     </div>
   );
 }
