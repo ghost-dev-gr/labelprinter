@@ -387,6 +387,7 @@ export default function App() {
               columns={COLUMNS}
               template={template}
               setTemplate={setTemplate}
+              connectionSettings={connectionSettings}
             />
           </TabsContent>
 

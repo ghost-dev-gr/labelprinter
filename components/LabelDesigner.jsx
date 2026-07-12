@@ -3,11 +3,13 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { PrintTestBoard } from '@api/BoardSDK';
 import { saveTemplate } from '@generated/utils/mondayData';
+import { printLabel } from '@generated/utils/qzPrint';
 import { flattenObject, resolveWebhookValue } from '@generated/utils/flatten';
 import {
   LayoutGrid,
   Sparkles,
   Webhook,
+  Printer,
   AlignHorizontalJustifyStart,
   AlignHorizontalJustifyCenter,
   AlignHorizontalJustifyEnd,
@@ -21,10 +23,12 @@ import {
 // (not a hand-picked px scale) so it's true-to-life size and matches the print output exactly.
 const MM_TO_PX = 96 / 25.4;
 
-export default function LabelDesigner({ boardId, template, setTemplate }) {
+export default function LabelDesigner({ boardId, template, setTemplate, connectionSettings }) {
   const dragState = useRef(null);
   const [selectedFieldId, setSelectedFieldId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [testPrinting, setTestPrinting] = useState(false);
+  const [testPrintStatus, setTestPrintStatus] = useState('');
   const [allColumns, setAllColumns] = useState([]);
   const [sampleData, setSampleData] = useState({});
   const [webhookFields, setWebhookFields] = useState([]);
@@ -231,16 +235,12 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
     const d = dragState.current;
     if (!d) return;
 
-    // The canvas itself is visually rotated (template.rotation), so a screen-space mouse
-    // delta has to be rotated back into the canvas's local (unrotated) coordinate space —
-    // otherwise dragging feels like it's moving in the wrong direction once rotated.
-    const dxScreen = e.clientX - d.startX;
-    const dyScreen = e.clientY - d.startY;
-    const theta = ((template.rotation || 0) * Math.PI) / 180;
-    const cos = Math.cos(theta);
-    const sin = Math.sin(theta);
-    const dxMm = (dxScreen * cos + dyScreen * sin) / MM_TO_PX;
-    const dyMm = (-dxScreen * sin + dyScreen * cos) / MM_TO_PX;
+    // The canvas is always shown unrotated (see the Label Canvas div below) — rotation is
+    // applied only at print time, the same way real label design tools (Zebra Designer,
+    // NiceLabel, DYMO Connect, etc.) work — so drag math is plain screen-space, no rotation
+    // compensation needed.
+    const dxMm = (e.clientX - d.startX) / MM_TO_PX;
+    const dyMm = (e.clientY - d.startY) / MM_TO_PX;
 
     // Clamp against the field's actual size, not a fixed margin — otherwise a tall/wide
     // field can be dragged mostly (or entirely) outside the label with no way back.
@@ -341,6 +341,53 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
     }
   }
 
+  // Print with the exact template currently on screen (even if not saved yet) using the
+  // last webhook's real data — the fastest way to check a design without switching tabs.
+  async function handleTestPrint() {
+    setTestPrintStatus('');
+
+    if (!template.fields || template.fields.length === 0) {
+      setTestPrintStatus('Add at least one field to the label first.');
+      return;
+    }
+    if (!connectionSettings || !connectionSettings.printerOverride) {
+      setTestPrintStatus('Configure a printer in the Connection tab first.');
+      return;
+    }
+
+    setTestPrinting(true);
+    try {
+      const res = await fetch('/api/webhook-inbox');
+      const inbox = await res.json();
+
+      if (!inbox.payload) {
+        setTestPrintStatus(`No webhook received yet — POST to /webhook/${webhookName} first.`);
+        return;
+      }
+
+      const flat = flattenObject(inbox.payload);
+      const values = {};
+      template.fields.forEach((f) => {
+        values[f.columnId] = resolveWebhookValue(flat, f.columnId) ?? '';
+      });
+
+      await printLabel(
+        connectionSettings.printerOverride,
+        template,
+        values,
+        [],
+        { connSettings: connectionSettings, copies: 1 }
+      );
+
+      setTestPrintStatus(`Sent to ${connectionSettings.printerOverride}.`);
+    } catch (err) {
+      console.error('Test print failed:', err);
+      setTestPrintStatus('Print failed: ' + err.message);
+    } finally {
+      setTestPrinting(false);
+    }
+  }
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
       {/* Configuration Column */}
@@ -383,7 +430,7 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
 
           <div className="space-y-1.5">
             <label htmlFor="rotation" className="text-xs font-medium text-muted-foreground">Physical Print Rotation</label>
-            <p className="text-[10px] text-muted-foreground">Rotates the entire label (including text) on the printer, exactly as previewed below.</p>
+            <p className="text-[10px] text-muted-foreground">Rotates the entire label (including text) at print time only — the canvas below always stays in normal reading orientation while you design.</p>
             <select
               id="rotation"
               value={template.rotation || 0}
@@ -540,22 +587,37 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
             <div>
               <h3 className="text-sm font-semibold text-foreground">Label Canvas</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Drag fields to position them
+                Drag fields to position them — this canvas always shows the label in normal reading orientation
                 {template.rotation > 0 && (
                   <span className="ml-2 px-2 py-0.5 bg-primary/10 text-primary text-[11px] font-medium rounded">
-                    Print rotation: {template.rotation}° (whole label rotates together, exactly as shown)
+                    Physically rotated {template.rotation}° at print time only (how it feeds into the printer)
                   </span>
                 )}
               </p>
             </div>
-            <button
-              onClick={handleSaveTemplate}
-              disabled={saving}
-              className="h-9 px-4 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-all disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save Template'}
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={handleTestPrint}
+                disabled={testPrinting}
+                title="Print using the last webhook's data"
+                className="h-9 px-4 rounded-md border border-primary/30 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10 transition-all disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                {testPrinting ? 'Printing...' : 'Test Print'}
+              </button>
+              <button
+                onClick={handleSaveTemplate}
+                disabled={saving}
+                className="h-9 px-4 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-all disabled:opacity-50"
+              >
+                {saving ? 'Saving...' : 'Save Template'}
+              </button>
+            </div>
           </div>
+
+          {testPrintStatus && (
+            <p className="text-[11px] text-muted-foreground -mt-4">{testPrintStatus}</p>
+          )}
 
           {/* Label Canvas */}
           <div className="flex justify-center items-center p-8 bg-secondary/30 rounded-lg border border-dashed border-border overflow-auto min-h-[400px]">
@@ -565,10 +627,7 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
                 width: `${template.widthMm}mm`,
                 height: `${template.heightMm}mm`,
                 backgroundImage: 'radial-gradient(circle, #e2e8f0 1px, transparent 1.5px)',
-                backgroundSize: '8px 8px',
-                transform: `rotate(${template.rotation || 0}deg)`,
-                transformOrigin: 'center center',
-                transition: 'transform 0.3s ease'
+                backgroundSize: '8px 8px'
               }}
             >
               {template.fields.map((f) => {
