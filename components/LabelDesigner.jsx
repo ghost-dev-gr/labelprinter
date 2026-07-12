@@ -188,7 +188,9 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
       startX: e.clientX,
       startY: e.clientY,
       origX: field.x,
-      origY: field.y
+      origY: field.y,
+      fieldWidth: field.width,
+      fieldHeight: field.height
     };
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
@@ -209,8 +211,12 @@ export default function LabelDesigner({ boardId, template, setTemplate }) {
     const dxMm = (dxScreen * cos + dyScreen * sin) / PX_PER_MM;
     const dyMm = (-dxScreen * sin + dyScreen * cos) / PX_PER_MM;
 
-    const newX = Math.max(0, Math.min(template.widthMm - 10, Math.round(d.origX + dxMm)));
-    const newY = Math.max(0, Math.min(template.heightMm - 5, Math.round(d.origY + dyMm)));
+    // Clamp against the field's actual size, not a fixed margin — otherwise a tall/wide
+    // field can be dragged mostly (or entirely) outside the label with no way back.
+    const maxX = Math.max(0, template.widthMm - d.fieldWidth);
+    const maxY = Math.max(0, template.heightMm - d.fieldHeight);
+    const newX = Math.max(0, Math.min(maxX, Math.round(d.origX + dxMm)));
+    const newY = Math.max(0, Math.min(maxY, Math.round(d.origY + dyMm)));
 
     updateField(d.fieldId, { x: newX, y: newY });
   }
