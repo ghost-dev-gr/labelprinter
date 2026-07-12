@@ -229,10 +229,12 @@ export function buildLabelHtml(template, values, columns = []) {
       ? `width:${f.width}mm;min-height:${f.height}mm;height:auto;overflow:visible;white-space:normal;word-break:break-word;`
       : `width:${f.width}mm;height:${f.height}mm;overflow:hidden;white-space:nowrap;`;
 
+    const verticalAlignMap = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
+
     const textStyle =
       `font-size:${f.fontSize}mm;font-family:Arial,Helvetica,sans-serif;line-height:1.2;` +
       `text-align:${f.align || 'left'};font-weight:${f.bold ? 'bold' : 'normal'};` +
-      `display:flex;align-items:${f.wrap ? 'flex-start' : 'center'};` +
+      `display:flex;align-items:${verticalAlignMap[f.verticalAlign] || 'center'};` +
       `justify-content:${f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'};` +
       `color:#000;`;
 

@@ -670,6 +670,8 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                     : 'hover:outline-1 hover:outline-dashed hover:outline-primary/50'
                 }`;
 
+                const verticalAlignMap = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
+
                 const contentStyle = {
                   width: `${f.width}mm`,
                   height: f.wrap ? 'auto' : `${f.height}mm`,
@@ -679,7 +681,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                   textAlign: f.align || 'left',
                   lineHeight: 1.2,
                   display: 'flex',
-                  alignItems: f.wrap ? 'flex-start' : 'center',
+                  alignItems: verticalAlignMap[f.verticalAlign] || 'center',
                   justifyContent: f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'
                 };
 
@@ -824,7 +826,7 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                       </div>
 
                       <div className="space-y-1.5">
-                        <label htmlFor={`field-align-${f.id}`} className="text-[11px] font-medium text-muted-foreground">Alignment</label>
+                        <label htmlFor={`field-align-${f.id}`} className="text-[11px] font-medium text-muted-foreground">Horizontal Align</label>
                         <select
                           id={`field-align-${f.id}`}
                           value={f.align || 'left'}
@@ -834,6 +836,20 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                           <option value="left">Left</option>
                           <option value="center">Center</option>
                           <option value="right">Right</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label htmlFor={`field-valign-${f.id}`} className="text-[11px] font-medium text-muted-foreground">Vertical Align</label>
+                        <select
+                          id={`field-valign-${f.id}`}
+                          value={f.verticalAlign || 'middle'}
+                          onChange={(e) => updateField(f.id, { verticalAlign: e.target.value })}
+                          className="h-8 w-full rounded border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
+                        >
+                          <option value="top">Top</option>
+                          <option value="middle">Middle</option>
+                          <option value="bottom">Bottom</option>
                         </select>
                       </div>
 
