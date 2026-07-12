@@ -292,47 +292,54 @@ export function renderLabelToCanvas(canvas, template, values, columns = [], dpi 
   ctx.textBaseline = 'alphabetic';
 
   template.fields.forEach((f) => {
-    const textVal = values[f.columnId] ?? '';
-    let text = String(textVal);
+    // One malformed field (bad value, NaN geometry, etc.) must not blank out every other
+    // field on the label — draw each independently and skip+log failures individually.
+    try {
+      const textVal = values[f.columnId] ?? '';
+      let text = String(textVal);
 
-    if (f.showLabel) {
-      const colTitle = f.columnId === 'name' ? 'Item' : (columns.find((c) => c.id === f.columnId)?.title || f.columnId);
-      text = `${colTitle}: ${text}`;
+      if (f.showLabel) {
+        const colTitle = f.columnId === 'name' ? 'Item' : (columns.find((c) => c.id === f.columnId)?.title || f.columnId);
+        text = `${colTitle}: ${text}`;
+      }
+
+      const placement = computeFieldPlacement(template, f);
+      const boxWidthPx = f.width * pxPerMm;
+      const boxHeightPx = f.height * pxPerMm;
+      const fontSizePx = f.fontSize * pxPerMm;
+
+      ctx.save();
+      ctx.translate((placement.left + f.width / 2) * pxPerMm, (placement.top + f.height / 2) * pxPerMm);
+      ctx.rotate((placement.rotation * Math.PI) / 180);
+
+      if (!f.wrap) {
+        ctx.beginPath();
+        ctx.rect(-boxWidthPx / 2, -boxHeightPx / 2, boxWidthPx, boxHeightPx);
+        ctx.clip();
+      }
+
+      ctx.font = `${f.bold ? 'bold ' : ''}${fontSizePx}px Arial, Helvetica, sans-serif`;
+      ctx.textAlign = f.align === 'center' ? 'center' : f.align === 'right' ? 'right' : 'left';
+      const textX = f.align === 'center' ? 0 : f.align === 'right' ? boxWidthPx / 2 : -boxWidthPx / 2;
+
+      const lines = f.wrap ? wrapTextToLines(ctx, text, boxWidthPx) : [text];
+      const lineHeightPx = fontSizePx * 1.2;
+      const totalHeightPx = lines.length * lineHeightPx;
+
+      let startY;
+      if (f.verticalAlign === 'top') startY = -boxHeightPx / 2 + fontSizePx;
+      else if (f.verticalAlign === 'bottom') startY = boxHeightPx / 2 - totalHeightPx + fontSizePx;
+      else startY = -totalHeightPx / 2 + fontSizePx;
+
+      lines.forEach((line, i) => {
+        ctx.fillText(line, textX, startY + i * lineHeightPx);
+      });
+
+      ctx.restore();
+    } catch (err) {
+      console.error('[renderLabelToCanvas] failed to draw field', f.id, f.columnId, err);
+      ctx.restore();
     }
-
-    const placement = computeFieldPlacement(template, f);
-    const boxWidthPx = f.width * pxPerMm;
-    const boxHeightPx = f.height * pxPerMm;
-    const fontSizePx = f.fontSize * pxPerMm;
-
-    ctx.save();
-    ctx.translate((placement.left + f.width / 2) * pxPerMm, (placement.top + f.height / 2) * pxPerMm);
-    ctx.rotate((placement.rotation * Math.PI) / 180);
-
-    if (!f.wrap) {
-      ctx.beginPath();
-      ctx.rect(-boxWidthPx / 2, -boxHeightPx / 2, boxWidthPx, boxHeightPx);
-      ctx.clip();
-    }
-
-    ctx.font = `${f.bold ? 'bold ' : ''}${fontSizePx}px Arial, Helvetica, sans-serif`;
-    ctx.textAlign = f.align === 'center' ? 'center' : f.align === 'right' ? 'right' : 'left';
-    const textX = f.align === 'center' ? 0 : f.align === 'right' ? boxWidthPx / 2 : -boxWidthPx / 2;
-
-    const lines = f.wrap ? wrapTextToLines(ctx, text, boxWidthPx) : [text];
-    const lineHeightPx = fontSizePx * 1.2;
-    const totalHeightPx = lines.length * lineHeightPx;
-
-    let startY;
-    if (f.verticalAlign === 'top') startY = -boxHeightPx / 2 + fontSizePx;
-    else if (f.verticalAlign === 'bottom') startY = boxHeightPx / 2 - totalHeightPx + fontSizePx;
-    else startY = -totalHeightPx / 2 + fontSizePx;
-
-    lines.forEach((line, i) => {
-      ctx.fillText(line, textX, startY + i * lineHeightPx);
-    });
-
-    ctx.restore();
   });
 }
 
