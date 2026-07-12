@@ -3,7 +3,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { PrintTestBoard } from '@api/BoardSDK';
 import { saveTemplate } from '@generated/utils/mondayData';
-import { printLabel } from '@generated/utils/qzPrint';
+import { printLabel, getFieldFootprint } from '@generated/utils/qzPrint';
 import { flattenObject, resolveWebhookValue } from '@generated/utils/flatten';
 import {
   LayoutGrid,
@@ -218,14 +218,15 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
     const field = template.fields.find((f) => f.id === fieldId);
     if (!field) return;
     setSelectedFieldId(fieldId);
+    const { footprintWidth, footprintHeight } = getFieldFootprint(field);
     dragState.current = {
       fieldId,
       startX: e.clientX,
       startY: e.clientY,
       origX: field.x,
       origY: field.y,
-      fieldWidth: field.width,
-      fieldHeight: field.height
+      fieldWidth: footprintWidth,
+      fieldHeight: footprintHeight
     };
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
@@ -291,25 +292,27 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
     const f = template.fields.find((field) => field.id === fieldId);
     if (!f) return;
 
+    const { footprintWidth, footprintHeight } = getFieldFootprint(f);
+
     const patch = {};
     switch (position) {
       case 'left':
         patch.x = 0;
         break;
       case 'center-h':
-        patch.x = Math.max(0, Math.round((template.widthMm - f.width) / 2));
+        patch.x = Math.max(0, Math.round((template.widthMm - footprintWidth) / 2));
         break;
       case 'right':
-        patch.x = Math.max(0, Math.round(template.widthMm - f.width));
+        patch.x = Math.max(0, Math.round(template.widthMm - footprintWidth));
         break;
       case 'top':
         patch.y = 0;
         break;
       case 'center-v':
-        patch.y = Math.max(0, Math.round((template.heightMm - f.height) / 2));
+        patch.y = Math.max(0, Math.round((template.heightMm - footprintHeight) / 2));
         break;
       case 'bottom':
-        patch.y = Math.max(0, Math.round(template.heightMm - f.height));
+        patch.y = Math.max(0, Math.round(template.heightMm - footprintHeight));
         break;
       default:
         return;
@@ -627,46 +630,83 @@ export default function LabelDesigner({ boardId, template, setTemplate, connecti
                 width: `${template.widthMm}mm`,
                 height: `${template.heightMm}mm`,
                 backgroundImage: 'radial-gradient(circle, #e2e8f0 1px, transparent 1.5px)',
-                backgroundSize: '8px 8px'
+                backgroundSize: '8px 8px',
+                fontFamily: 'Arial, Helvetica, sans-serif'
               }}
             >
               {template.fields.map((f) => {
                 const isSelected = selectedFieldId === f.id;
                 const displayVal = sampleData[f.columnId] || `[${columnTitle(f.columnId)}]`;
-                return (
-                  <div
-                    key={f.id}
-                    onPointerDown={(e) => onPointerDown(f.id, e)}
-                    className={`absolute select-none text-black transition-all cursor-move ${
-                      f.wrap ? 'overflow-visible' : 'overflow-hidden'
-                    } ${
-                      isSelected
-                        ? 'outline-2 outline-dashed outline-primary outline-offset-1 bg-primary/5'
-                        : 'hover:outline-1 hover:outline-dashed hover:outline-primary/50'
-                    }`}
-                    style={{
-                      left: `${f.x}mm`,
-                      top: `${f.y}mm`,
-                      width: `${f.width}mm`,
-                      height: f.wrap ? 'auto' : `${f.height}mm`,
-                      minHeight: `${f.height}mm`,
-                      fontSize: `${f.fontSize}mm`,
-                      fontWeight: f.bold ? 'bold' : 'normal',
-                      textAlign: f.align || 'left',
-                      lineHeight: 1.2,
-                      display: 'flex',
-                      alignItems: f.wrap ? 'flex-start' : 'center',
-                      justifyContent: f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start',
-                      transform: f.rotation ? `rotate(${f.rotation}deg)` : undefined,
-                      transformOrigin: 'center center'
-                    }}
-                  >
+                const { footprintWidth, footprintHeight, rotation } = getFieldFootprint(f);
+
+                const contentClassName = `absolute select-none text-black transition-all ${
+                  f.wrap ? 'overflow-visible' : 'overflow-hidden'
+                } ${
+                  isSelected
+                    ? 'outline-2 outline-dashed outline-primary outline-offset-1 bg-primary/5'
+                    : 'hover:outline-1 hover:outline-dashed hover:outline-primary/50'
+                }`;
+
+                const contentStyle = {
+                  width: `${f.width}mm`,
+                  height: f.wrap ? 'auto' : `${f.height}mm`,
+                  minHeight: `${f.height}mm`,
+                  fontSize: `${f.fontSize}mm`,
+                  fontWeight: f.bold ? 'bold' : 'normal',
+                  textAlign: f.align || 'left',
+                  lineHeight: 1.2,
+                  display: 'flex',
+                  alignItems: f.wrap ? 'flex-start' : 'center',
+                  justifyContent: f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'
+                };
+
+                const content = (
+                  <>
                     {f.showLabel && (
                       <span className="opacity-40 text-[75%] font-normal mr-1 select-none">
                         {columnTitle(f.columnId)}:
                       </span>
                     )}
                     <span className={f.wrap ? 'whitespace-normal break-words' : 'truncate'}>{displayVal}</span>
+                  </>
+                );
+
+                if (!rotation) {
+                  return (
+                    <div
+                      key={f.id}
+                      onPointerDown={(e) => onPointerDown(f.id, e)}
+                      className={`${contentClassName} cursor-move`}
+                      style={{ left: `${f.x}mm`, top: `${f.y}mm`, ...contentStyle }}
+                    >
+                      {content}
+                    </div>
+                  );
+                }
+
+                // Outer div reserves the ROTATED footprint (width/height swapped for
+                // 90/270) — this is what dragging, clamping and alignment position against.
+                // Inner div keeps the field's declared (unrotated) size and is centered +
+                // rotated within that footprint, matching the print HTML exactly.
+                return (
+                  <div
+                    key={f.id}
+                    onPointerDown={(e) => onPointerDown(f.id, e)}
+                    className="absolute cursor-move"
+                    style={{ left: `${f.x}mm`, top: `${f.y}mm`, width: `${footprintWidth}mm`, height: `${footprintHeight}mm` }}
+                  >
+                    <div
+                      className={contentClassName}
+                      style={{
+                        left: '50%',
+                        top: '50%',
+                        ...contentStyle,
+                        transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+                        transformOrigin: 'center center'
+                      }}
+                    >
+                      {content}
+                    </div>
                   </div>
                 );
               })}

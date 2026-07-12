@@ -203,6 +203,18 @@ export function getPrintedDimensions(template) {
   return { pageWidth: template.widthMm, pageHeight: template.heightMm, rotation };
 }
 
+// A rotated field's on-page footprint (used for its bounding box) swaps width/height at
+// 90/270 — CSS transform:rotate() alone never does this, it only repaints in place, so
+// anything that positions/clamps against the field's declared width/height (dragging,
+// alignment, other fields' layout) would otherwise be working against stale dimensions.
+export function getFieldFootprint(field) {
+  const rotation = ((field.rotation || 0) % 360 + 360) % 360;
+  if (rotation === 90 || rotation === 270) {
+    return { footprintWidth: field.height, footprintHeight: field.width, rotation };
+  }
+  return { footprintWidth: field.width, footprintHeight: field.height, rotation };
+}
+
 export function buildLabelHtml(template, values, columns = []) {
   const fieldsHtml = template.fields.map((f) => {
     const textVal = values[f.columnId];
@@ -217,19 +229,32 @@ export function buildLabelHtml(template, values, columns = []) {
       ? `width:${f.width}mm;min-height:${f.height}mm;height:auto;overflow:visible;white-space:normal;word-break:break-word;`
       : `width:${f.width}mm;height:${f.height}mm;overflow:hidden;white-space:nowrap;`;
 
-    const rotationStyle = f.rotation
-      ? `transform:rotate(${f.rotation}deg);transform-origin:center center;`
-      : '';
-
-    return (
-      `<div style="position:absolute;left:${f.x}mm;top:${f.y}mm;` +
-      sizeStyle +
-      `font-size:${f.fontSize}mm;font-family:sans-serif;line-height:1.2;` +
+    const textStyle =
+      `font-size:${f.fontSize}mm;font-family:Arial,Helvetica,sans-serif;line-height:1.2;` +
       `text-align:${f.align || 'left'};font-weight:${f.bold ? 'bold' : 'normal'};` +
       `display:flex;align-items:${f.wrap ? 'flex-start' : 'center'};` +
       `justify-content:${f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'};` +
-      rotationStyle +
-      `color:#000;">${formattedText}</div>`
+      `color:#000;`;
+
+    const { footprintWidth, footprintHeight, rotation } = getFieldFootprint(f);
+
+    if (!rotation) {
+      return (
+        `<div style="position:absolute;left:${f.x}mm;top:${f.y}mm;` +
+        sizeStyle + textStyle + `">${formattedText}</div>`
+      );
+    }
+
+    // Outer box reserves the ROTATED footprint (width/height swapped) so it occupies the
+    // real physical space on the label; the inner box keeps the field's declared (unrotated)
+    // width/height and is centered + rotated within that footprint.
+    return (
+      `<div style="position:absolute;left:${f.x}mm;top:${f.y}mm;` +
+      `width:${footprintWidth}mm;height:${footprintHeight}mm;overflow:visible;">` +
+      `<div style="position:absolute;left:50%;top:50%;` +
+      sizeStyle + textStyle +
+      `transform:translate(-50%,-50%) rotate(${rotation}deg);transform-origin:center center;">` +
+      `${formattedText}</div></div>`
     );
   }).join('');
 
@@ -239,7 +264,7 @@ export function buildLabelHtml(template, values, columns = []) {
     return (
       `<div style="position:relative;width:${template.widthMm}mm;` +
       `height:${template.heightMm}mm;background:#ffffff;overflow:hidden;` +
-      `font-family:sans-serif;color:#000000;box-sizing:border-box;margin:0;padding:0;">${fieldsHtml}</div>`
+      `font-family:Arial,Helvetica,sans-serif;color:#000000;box-sizing:border-box;margin:0;padding:0;">${fieldsHtml}</div>`
     );
   }
 
@@ -252,7 +277,7 @@ export function buildLabelHtml(template, values, columns = []) {
     `<div style="position:relative;width:${pageWidth}mm;height:${pageHeight}mm;` +
     `background:#ffffff;overflow:hidden;margin:0;padding:0;">` +
     `<div style="position:absolute;left:50%;top:50%;width:${template.widthMm}mm;height:${template.heightMm}mm;` +
-    `font-family:sans-serif;color:#000000;box-sizing:border-box;` +
+    `font-family:Arial,Helvetica,sans-serif;color:#000000;box-sizing:border-box;` +
     `transform:translate(-50%,-50%) rotate(${rotation}deg);transform-origin:center center;">` +
     `${fieldsHtml}</div></div>`
   );
