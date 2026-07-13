@@ -13,6 +13,8 @@ export default function ConnectionSettings({ boardId, connectionSettings, setCon
   const [connectionStatus, setConnectionStatus] = useState({ success: null, message: '' });
     const [testPrinting, setTestPrinting] = useState(false);
     const [testPrintStatus, setTestPrintStatus] = useState({ success: null, message: '' });
+    const [testingServerConnection, setTestingServerConnection] = useState(false);
+    const [serverConnectionStatus, setServerConnectionStatus] = useState({ success: null, message: '' });
 
   const settings = connectionSettings || DEFAULT_CONNECTION_SETTINGS;
 
@@ -52,6 +54,31 @@ export default function ConnectionSettings({ boardId, connectionSettings, setCon
       setConnectionStatus({ success: false, message: err.message || 'Connection failed' });
     } finally {
       setTestingConnection(false);
+    }
+  }
+
+  // Tests that the SERVER (not this browser tab) can connect to QZ Tray on its own, using
+  // whatever connection settings were last saved. Proves server-side printing is viable
+  // independent of any browser tab being open.
+  async function testServerConnection() {
+    setTestingServerConnection(true);
+    setServerConnectionStatus({ success: null, message: '' });
+    try {
+      const res = await fetch('/api/qz-test');
+      const json = await res.json();
+      if (json.success) {
+        setServerConnectionStatus({
+          success: true,
+          message: `Server connected directly to QZ Tray. Found ${json.printers.length} printer${json.printers.length !== 1 ? 's' : ''}.`
+        });
+      } else {
+        setServerConnectionStatus({ success: false, message: json.error || 'Server could not connect.' });
+      }
+    } catch (err) {
+      console.error('Server connection test failed:', err);
+      setServerConnectionStatus({ success: false, message: err.message || 'Request to server failed.' });
+    } finally {
+      setTestingServerConnection(false);
     }
   }
 
@@ -301,6 +328,32 @@ export default function ConnectionSettings({ boardId, connectionSettings, setCon
           </div>
         )}
 
+        {serverConnectionStatus.message && (
+          <div
+            className={`rounded-lg p-3.5 flex items-start gap-3 border ${
+              serverConnectionStatus.success
+                ? 'bg-green-100/50 dark:bg-green-950/20 border-green-500/20'
+                : 'bg-destructive/5 border-destructive/20'
+            }`}
+          >
+            {serverConnectionStatus.success ? (
+              <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 mt-0.5" />
+            ) : (
+              <XCircle className="w-4 h-4 text-destructive mt-0.5" />
+            )}
+            <div>
+              <p
+                className={`text-xs font-semibold ${
+                  serverConnectionStatus.success ? 'text-green-800 dark:text-green-400' : 'text-destructive'
+                }`}
+              >
+                {serverConnectionStatus.success ? 'Server Connected' : 'Server Connection Failed'}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{serverConnectionStatus.message}</p>
+            </div>
+          </div>
+        )}
+
         <div className="flex gap-3 pt-2">
           <button
             onClick={testConnection}
@@ -316,7 +369,23 @@ export default function ConnectionSettings({ boardId, connectionSettings, setCon
               'Test Socket'
             )}
           </button>
-          
+
+          <button
+            onClick={testServerConnection}
+            disabled={testingServerConnection}
+            title="Tests that the server itself can connect to QZ Tray, with no browser tab needed"
+            className="h-9 px-4 rounded-md border border-border bg-background text-xs font-semibold text-foreground hover:bg-secondary transition-all disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {testingServerConnection ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Testing...
+              </>
+            ) : (
+              'Test Server Connection'
+            )}
+          </button>
+
           <button
             onClick={handleTestPrint}
             disabled={testPrinting}

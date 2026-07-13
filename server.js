@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 5175
 
 const dbDir = path.resolve(__dirname, 'db')
 const distDir = path.resolve(__dirname, 'dist')
-const { storageHandler, webhookHandler, webhookInboxHandler } = createHandlers(dbDir)
+const { storageHandler, webhookHandler, webhookInboxHandler, qzTestHandler } = createHandlers(dbDir)
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -64,6 +64,7 @@ const server = http.createServer((req, res) => {
 
   if (urlPath === '/api/storage') return storageHandler(req, res)
   if (urlPath === '/api/webhook-inbox') return webhookInboxHandler(req, res)
+  if (urlPath === '/api/qz-test') return qzTestHandler(req, res)
   if (urlPath.startsWith('/webhook/')) return webhookHandler(req, res)
 
   return serveStatic(req, res)

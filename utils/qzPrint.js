@@ -1,14 +1,17 @@
 // qzPrint.js
-// Real QZ Tray integration - connects to window.qz loaded by the stub in App.jsx
-// Wraps websocket connection with Local Network Access detection (window.lna)
+// Real QZ Tray integration - connects to window.qz in the browser (loaded via CDN in
+// App.jsx), or to globalThis.qz when run server-side (see server/qzClient.js, which
+// polyfills WebSocket + qz-tray on globalThis so this same code works from Node too).
+// Wraps websocket connection with Local Network Access detection (window.lna) when present.
 
-import { signRequest } from './qzSignature';
+import { signRequest } from './qzSignature.js';
 
 function getQz() {
-  if (!window.qz) {
-    throw new Error('QZ Tray library not loaded. Make sure qz is available on window.');
+  const qzClient = typeof window !== 'undefined' ? window.qz : globalThis.qz;
+  if (!qzClient) {
+    throw new Error('QZ Tray library not loaded. Make sure qz is available.');
   }
-  return window.qz;
+  return qzClient;
 }
 
 // QZ Industries' official demo certificate (public, safe to embed)
@@ -143,15 +146,17 @@ export async function ensureConnected(connSettings = {}) {
     return qz.websocket.connect(options);
   };
 
-  // Wrap with Local Network Access detector (window.lna) if available
-  if (window.lna?.detectLna) {
+  // Wrap with Local Network Access detector (window.lna) if available — browser only,
+  // there's no equivalent (or need for one) when connecting from the server.
+  const lna = typeof window !== 'undefined' ? window.lna : null;
+  if (lna?.detectLna) {
     console.log('[qzPrint] window.lna.detectLna found, wrapping connection');
     try {
-      await window.lna.detectLna(wsUrl, doConnect, { isWebSocket: true });
+      await lna.detectLna(wsUrl, doConnect, { isWebSocket: true });
       console.log('[qzPrint] connection successful via LNA wrapper');
     } catch (err) {
       console.error('[qzPrint] connection failed:', err);
-      if (window.lna.LnaError && err instanceof window.lna.LnaError) {
+      if (lna.LnaError && err instanceof lna.LnaError) {
         console.log('[LNA] LnaError - denied:', err.denied, 'cause:', err.cause);
       }
       throw err;
@@ -251,6 +256,80 @@ export function computeFieldPlacement(template, field) {
     pageWidth,
     pageHeight
   };
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// Server-side print path — no browser, no canvas needed. Builds the label as an HTML
+// string using computeFieldPlacement (the same position math the browser's canvas
+// rendering uses), so positions stay consistent between the two paths. QZ Tray rasterizes
+// this HTML itself. Used only by server/printService.js for webhook-triggered auto-print;
+// the browser's own printing (Test Print, Quick Print, etc.) is untouched and still uses
+// the canvas path above.
+export function buildLabelHtml(template, values, columns = []) {
+  const { pageWidth, pageHeight } = getPrintedDimensions(template);
+  const verticalAlignMap = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
+
+  const fieldsHtml = template.fields.map((f) => {
+    const textVal = values[f.columnId];
+    let formattedText = escapeHtml(textVal);
+
+    if (f.showLabel) {
+      const colTitle = f.columnId === 'name' ? 'Item' : (columns.find((c) => c.id === f.columnId)?.title || f.columnId);
+      formattedText = `<span style="opacity:0.6;font-size:80%;margin-right:4px;">${escapeHtml(colTitle)}:</span>${formattedText}`;
+    }
+
+    const sizeStyle = f.wrap
+      ? `width:${f.width}mm;min-height:${f.height}mm;height:auto;overflow:visible;white-space:normal;word-break:break-word;`
+      : `width:${f.width}mm;height:${f.height}mm;overflow:hidden;white-space:nowrap;`;
+
+    const textStyle =
+      `font-size:${f.fontSize}mm;font-family:Arial,Helvetica,sans-serif;line-height:1.2;` +
+      `text-align:${f.align || 'left'};font-weight:${f.bold ? 'bold' : 'normal'};` +
+      `display:flex;align-items:${verticalAlignMap[f.verticalAlign] || 'center'};` +
+      `justify-content:${f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start'};` +
+      `color:#000;`;
+
+    const placement = computeFieldPlacement(template, f);
+    const rotationStyle = placement.rotation
+      ? `transform:rotate(${placement.rotation}deg);transform-origin:center center;`
+      : '';
+
+    return (
+      `<div style="position:absolute;left:${placement.left}mm;top:${placement.top}mm;` +
+      sizeStyle + textStyle + rotationStyle +
+      `">${formattedText}</div>`
+    );
+  }).join('');
+
+  return (
+    `<div style="position:relative;width:${pageWidth}mm;height:${pageHeight}mm;` +
+    `background:#ffffff;overflow:hidden;margin:0;padding:0;">${fieldsHtml}</div>`
+  );
+}
+
+export async function printLabelHtml(printerName, template, values, columns, { connSettings, copies = 1 } = {}) {
+  await ensureConnected(connSettings);
+  const qz = getQz();
+
+  const { pageWidth, pageHeight } = getPrintedDimensions(template);
+  const config = qz.configs.create(printerName, {
+    size: { width: pageWidth, height: pageHeight },
+    units: 'mm',
+    margins: 0,
+    rasterize: true,
+    colorType: 'grayscale',
+    copies
+  });
+
+  const html = buildLabelHtml(template, values, columns);
+  const data = [{ type: 'pixel', format: 'html', flavor: 'plain', data: html }];
+  await qz.print(config, data);
 }
 
 // Breaks text into lines that fit within maxWidthPx, using the canvas context's current

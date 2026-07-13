@@ -10,13 +10,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // (see server/handlers.js), so `npm run dev` behaves identically to the deployed app.
 function localApiPlugin() {
   const dbDir = path.resolve(__dirname, 'db')
-  const { storageHandler, webhookHandler, webhookInboxHandler } = createHandlers(dbDir)
+  const { storageHandler, webhookHandler, webhookInboxHandler, qzTestHandler } = createHandlers(dbDir)
 
   return {
     name: 'local-api',
     configureServer(server) {
       server.middlewares.use('/api/storage', storageHandler)
       server.middlewares.use('/api/webhook-inbox', webhookInboxHandler)
+      server.middlewares.use('/api/qz-test', qzTestHandler)
       server.middlewares.use('/webhook', webhookHandler)
     },
   }

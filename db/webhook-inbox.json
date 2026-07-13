@@ -1,8 +1,33 @@
 {
-  "receivedAt": "2026-07-12T09:03:45.641Z",
+  "receivedAt": "2026-07-13T16:25:19.459Z",
   "payload": {
     "event": {
-      "itemId": 42
+      "app": "monday",
+      "type": "update_column_value",
+      "triggerTime": "2026-07-13T16:00:27.251Z",
+      "subscriptionId": 764077941,
+      "isRetry": false,
+      "userId": 35633501,
+      "originalTriggerUuid": null,
+      "boardId": 18421089379,
+      "groupId": "group_mm56zm7t",
+      "pulseId": 12511213339,
+      "pulseName": "sdadsadsadsadsa",
+      "columnId": "button_mm52pm6n",
+      "columnType": "button",
+      "columnTitle": "Button",
+      "value": {
+        "clicks": 19,
+        "changed_at": "2026-07-13T16:00:34.624Z"
+      },
+      "previousValue": {
+        "clicks": 18,
+        "changed_at": "2026-07-12T19:44:44.066Z"
+      },
+      "changedAt": 1783958425.4877486,
+      "isTopGroup": true,
+      "triggerUuid": "91bb8a90901478103c13e39e62723622",
+      "groupTitle": "Goran Savic-Crkva Preobrazenja Gospodnjeg- KS  O.STOJAN HRVATSKA-MEDINCI KOD SLATINE"
     }
   }
 }

@@ -5,6 +5,9 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import './qzClient.js'
+import { listPrinters } from '../utils/qzPrint.js'
+import { createPrintService } from './printService.js'
 
 const DEFAULT_ACTIVE_WEBHOOK_NAME = 'test2'
 
@@ -26,6 +29,7 @@ function respondJson(res, status, body) {
 export function createHandlers(dbDir) {
   const settingsFile = path.join(dbDir, 'settings.json')
   const inboxFile = path.join(dbDir, 'webhook-inbox.json')
+  const printService = createPrintService(dbDir)
 
   function readStore() {
     try {
@@ -121,7 +125,10 @@ export function createHandlers(dbDir) {
   // the Label Designer field picker and App.jsx's auto-print polling.
   async function webhookHandler(req, res) {
     const url = new URL(req.url, 'http://localhost')
-    const name = url.pathname.replace(/^\/webhook\//, '').replace(/\/$/, '') || 'test'
+    // In production (server.js) req.url still has the full "/webhook/<name>" path. Under
+    // `npm run dev`, Vite's middleware mounting strips the "/webhook" prefix before calling
+    // this handler, leaving just "/<name>" — handle both so dev and prod behave identically.
+    const name = url.pathname.replace(/^\/webhook\//, '').replace(/^\//, '').replace(/\/$/, '') || 'test'
 
     const raw = await readRequestBody(req)
     let parsed = raw
@@ -150,6 +157,11 @@ export function createHandlers(dbDir) {
         JSON.stringify({ receivedAt: new Date().toISOString(), payload: enriched }, null, 2)
       )
       console.log(`[webhook:${name}] is the active data source — saved to ${inboxFile}`)
+
+      // Fire-and-forget: don't make monday.com's webhook wait on the print job.
+      printService.printFromWebhookPayload(enriched).catch((err) => {
+        console.error('[auto-print] failed:', err)
+      })
     }
 
     respondJson(res, 200, { received: true, webhook: name, isActiveSource, body: parsed })
@@ -166,5 +178,34 @@ export function createHandlers(dbDir) {
     }
   }
 
-  return { storageHandler, webhookHandler, webhookInboxHandler }
+  // Proves the SERVER (not the browser) can connect to QZ Tray on its own — connects using
+  // the same saved connection settings the browser uses, and lists printers. No browser tab
+  // involved in this call at all.
+  async function qzTestHandler(req, res) {
+    const connectionRaw = readStore().qz_connection_settings
+    if (!connectionRaw) {
+      respondJson(res, 400, { success: false, error: 'No connection settings saved yet — configure a printer in the Connection tab first.' })
+      return
+    }
+
+    let connectionSettings
+    try {
+      connectionSettings = JSON.parse(connectionRaw)
+    } catch (err) {
+      respondJson(res, 400, { success: false, error: 'Saved connection settings are corrupt: ' + err.message })
+      return
+    }
+
+    try {
+      console.log('[qz-test] Connecting to QZ Tray from the server...')
+      const printers = await listPrinters(connectionSettings)
+      console.log('[qz-test] Connected successfully. Printers:', printers)
+      respondJson(res, 200, { success: true, printers })
+    } catch (err) {
+      console.error('[qz-test] Failed to connect from server:', err)
+      respondJson(res, 500, { success: false, error: err.message || String(err) })
+    }
+  }
+
+  return { storageHandler, webhookHandler, webhookInboxHandler, qzTestHandler }
 }
